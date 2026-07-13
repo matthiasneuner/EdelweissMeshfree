@@ -44,35 +44,19 @@ class VerletListParticleManager(KDBinOrganizedParticleManager):
         hasChanged = False
 
         if self._bondParticlesToKernelFunctions:
-            self._journal.message("Updating kernel function positions...", "ParticleManager")
-            for particle, kernelFunction in zip(self._particles, self._meshfreeKernelFunctions):
-                particleCoordinates = particle.getCenterCoordinates()
+            self._updateBondedKernelFunctionPositions()
 
-                if self._randomlyShiftPartliceShapeFunctions:
-                    if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
-                        particleVol = particle.getVolumeUndeformed()
-                        particleSize = particleVol ** (1.0 / self._dimension)
-
-                        randdisp = (
-                            (np.random.rand(self._dimension) - 0.5)
-                            * np.sqrt(particle.getVolumeUndeformed())
-                            * self._randomlyShiftPartliceShapeFunctions
-                            * particleSize
-                        )
-                        particleCoordinates += randdisp
-
-                kernelFunction.moveTo(particleCoordinates)
-
-            self.signalizeKernelFunctionUpdate()
-
-        # Check if rebuild is needed based on displacements
-        currentParticleCoords = np.array([p.getCenterCoordinates() for p in self._particles])
+        # Check if rebuild is needed based on displacements. The particles'
+        # *evaluation* coordinates (vertices) are tracked, not just the
+        # centers: for large-strain particles the vertices can move farther
+        # than the center, which would otherwise defeat the skin margin.
+        currentParticleCoords = np.concatenate([np.atleast_2d(p.getEvaluationCoordinates()) for p in self._particles])
         currentKernelCoords = np.array([k.node.coordinates for k in self._meshfreeKernelFunctions])
 
         if self._lastRebuildParticleCoords is None:
             self._needsRebuild = True
         else:
-            # Max displacement of any particle
+            # Max displacement of any particle evaluation point
             max_p_disp = np.max(np.linalg.norm(currentParticleCoords - self._lastRebuildParticleCoords, axis=1))
             # Max displacement of any kernel
             max_k_disp = np.max(np.linalg.norm(currentKernelCoords - self._lastRebuildKernelCoords, axis=1))

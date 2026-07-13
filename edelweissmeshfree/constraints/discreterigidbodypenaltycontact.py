@@ -36,7 +36,7 @@ class DiscreteRigidContactStiffnessView:
 
 class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
     """
-    Implicit Penalty contact constraint for discrete rigid bodies.
+    Implicit Penalty contact constraint for discrete rigid bodies (3D only).
 
     Mathematical Formulation
     ------------------------
@@ -53,7 +53,8 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
          - n_s is the outward unit normal vector of the rigid surface.
          - Δu_p is the interpolated displacement increment of the particle: Δu_p = ∑ N_i Δu_i.
          - Δu_rp, Δθ_rp are the displacement and rotation increments of the Reference Point.
-         - r_s is the relative position vector of the contact point: r_s = x_s0 - rp_initial.
+         - r_s is the moment arm of the contact point about the *current* RP position:
+           r_s = x_s0 - (rp_initial + u_rp).
 
        Contact is active when g >= 0.
 
@@ -68,33 +69,21 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
          f_rp = -f_p = f_n · n_s
          τ_rp = r_s × f_p = -f_n · (r_s × n_s)
 
-       The contribution to the global external load vector PExt for the active DOFs U is:
+       The contribution to the assembled constraint vector for the active DOFs U is:
          P_contact = f_n · ∂g/∂U = f_n · w
        where the gradient vector w is:
-         w = [ -N_i · n_s,  n_s,  n_s × r_s ]
+         w = [ -N_i · n_s,  n_s,  r_s × n_s ]
 
     3. Tangent Stiffness Matrix:
-       The Jacobian of the contact force vector with respect to the displacement increments gives
-       the tangent stiffness matrix:
-         K = ∂(f_n · w)/∂U = K_mat + K_geo
-
-       - Material Stiffness (Penalty part):
-         K_mat = k_n · (w ⊗ w)
-
-       - Geometric Stiffness (Faceted Surface assumption):
-         Since the rigid surface is represented by flat elements, the normal vector n_s does not change
-         with respect to particle sliding (∂n_s/∂u_p = 0). It only changes due to rigid body rotation:
-           δn_s = δθ_rp × n_s = -n_s_hat · δθ_rp
-         where n_s_hat is the skew-symmetric cross-product matrix of n_s.
-
-         Differentiating the forces and moments yields the exact faceted geometric stiffness terms:
-           a) Particle force coupling with RP rotation:
-              ∂f_p/∂θ_rp = -f_n · n_s_hat
-           b) RP force coupling with RP rotation:
-              ∂f_rp/∂θ_rp = f_n · n_s_hat
-           c) RP torque coupling with RP rotation (torque-rotation geometric stiffness):
-              ∂τ_rp/∂θ_rp = f_p_hat · r_s_hat
-              where f_p_hat and r_s_hat are the skew-symmetric matrices of f_p and r_s.
+       Within one increment, d_0, n_s and r_s are evaluated once from the
+       configuration at the start of the increment and are held constant over
+       the Newton iterations (the node fields, particle positions, and rigid
+       body kinematics are only updated upon increment acceptance). The
+       gradient w is therefore constant within the increment, and the exact,
+       consistent Jacobian of the assembled residual is the penalty term alone:
+         K = ∂(f_n · w)/∂U = k_n · (w ⊗ w)
+       No geometric stiffness is assembled -- variations of n_s and r_s only
+       materialize across increments, not across iterations.
     """
 
     def __init__(
@@ -106,6 +95,12 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
         penaltyParameter: float = 1e5,
         proximityFactor: float = 2.0,
     ):
+        if model.domainSize != 3:
+            raise ValueError(
+                "DiscreteRigidBodyPenaltyContact is only available for 3D models "
+                f"(model has domainSize {model.domainSize})."
+            )
+
         self._name = name
         self._particles = list(particles)
         self.rigidBody = rigidBody
@@ -121,6 +116,14 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
         self._fieldsOnNodes = []
         self.isActive = False
         self.reactionForce = 0.0
+
+        # Per-increment cache of the surface query for the candidate particles;
+        # valid because particle positions and rigid body kinematics are frozen
+        # between updateConnectivity() and increment acceptance.
+        self._candidateCoords = np.empty((0, 3))
+        self._candidateDists = np.empty(0)
+        self._candidateNormals = np.empty((0, 3))
+        self._rpCurrent = np.zeros(3)
 
     @property
     def name(self) -> str:
@@ -155,52 +158,24 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
     def assignAdditionalScalarVariables(self, scalarVariables: list):
         pass
 
-    def _querySurface(self, coords, proximity_factor=None):
-        if not hasattr(self, "_query_engine") or self._query_engine is None:
-            from edelweissmeshfree.utils.discretesurfacequery import (
-                DiscreteSurfaceQuery,
-            )
-
-            if getattr(self.rigidBody, "surface_mesh", None) is None:
-                raise RuntimeError("RigidBody has no surface_mesh to query.")
-            self._query_engine = DiscreteSurfaceQuery(mesh=self.rigidBody.surface_mesh)
-
-        n_points = coords.shape[0]
-        if proximity_factor is not None:
-            curr_min, curr_max = self.rigidBody.getAABB()
-            aabb_min = curr_min - proximity_factor
-            aabb_max = curr_max + proximity_factor
-            in_aabb = np.all((coords >= aabb_min) & (coords <= aabb_max), axis=1)
-            active_indices = np.where(in_aabb)[0]
-            if len(active_indices) == 0:
-                return np.full(n_points, np.inf), np.zeros((n_points, 3))
-            coords_to_query = coords[active_indices]
-        else:
-            coords_to_query = coords
-            active_indices = np.arange(n_points)
-
-        u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
-        active_dists, active_normals = self._query_engine.query(
-            coords_to_query, translation=u_rp, rotation_matrix=R, rotation_center=rp_initial
-        )
-
-        dists = np.full(n_points, np.inf)
-        dists[active_indices] = active_dists
-        normals = np.zeros((n_points, 3))
-        normals[active_indices] = active_normals
-        return dists, normals
-
     def updateConnectivity(self, model):
-        """Dynamic proximity check at start of step to find candidate particles."""
+        """Dynamic proximity check at the start of each increment to find candidate
+        particles, and caching of the surface query for the increment."""
         coords = np.array([p.getCenterCoordinates() for p in self._particles])
-        u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
-        dists, _ = self._querySurface(coords, proximity_factor=self.proximityFactor)
+        dists, normals = self.rigidBody.querySurface(coords, proximityDistance=self.proximityFactor)
 
         active_mask = dists < self.proximityFactor
         new_candidates = [p for i, p in enumerate(self._particles) if active_mask[i]]
 
         hasChanged = new_candidates != self._candidates
         self._candidates = new_candidates
+
+        self._candidateCoords = coords[active_mask]
+        self._candidateDists = dists[active_mask]
+        self._candidateNormals = normals[active_mask]
+
+        u_rp, _, rp_initial = self.rigidBody.getCurrentKinematics()
+        self._rpCurrent = rp_initial + u_rp
 
         candidate_nodes = []
         seen = set()
@@ -309,16 +284,15 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
         node_local_dofs = self._getLocalDofMapping()
         rp_dofs = node_local_dofs[self.rigidBody.rpNode]
 
-        # RP start-of-step configuration
-        _, _, rp_initial = self.rigidBody.getCurrentKinematics()
-
         # RP current iteration trial increments
         delta_u_rp = dU[rp_dofs[0:nDim]]
         delta_theta_rp = dU[rp_dofs[nDim : nDim + nRot]]
 
-        # Vectorized surface query
-        coords = np.array([p.getCenterCoordinates() for p in self._candidates])
-        dists, normals = self._querySurface(coords, proximity_factor=self.proximityFactor)
+        # Cached start-of-increment surface query and RP position
+        coords = self._candidateCoords
+        dists = self._candidateDists
+        normals = self._candidateNormals
+        rp_current = self._rpCurrent
 
         for idx, p in enumerate(self._candidates):
             d0 = dists[idx]
@@ -327,9 +301,10 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
 
             n_s = normals[idx]
 
-            # Contact point on surface at start of step
+            # Contact point on surface at start of increment, and its moment
+            # arm about the current RP position
             x_s0 = coords[idx] - d0 * n_s
-            r_s = x_s0 - rp_initial
+            r_s = x_s0 - rp_current
 
             # Interpolate particle displacement increment
             N_vec = p.getInterpolationVector(coords[idx]).flatten()
@@ -358,36 +333,17 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
                 dg_dU[p_dofs[start_idx : start_idx + nDim]] = N_vec[i] * c
 
             dg_dU[rp_dofs[0:nDim]] = -c
-            dg_dU[rp_dofs[nDim : nDim + nRot]] = np.cross(r_s, c)
+            # d g / d Δθ = r_s x n_s: a rotation moving the contact point along
+            # -n_s (away from the particle) must decrease the gap.
+            dg_dU[rp_dofs[nDim : nDim + nRot]] = np.cross(r_s, n_s)
 
             # Update residual
             f_n_mag = self._penaltyParameter * g
             PExt += f_n_mag * dg_dU
             self.reactionForce += f_n_mag
 
-            # Tangent Stiffness Assembly
-            K_mat = self._penaltyParameter * np.outer(dg_dU, dg_dU)
-            K_geo = np.zeros((self.nDof, self.nDof))
-
-            # Cross-product skew matrices for geometric terms
-            f_p = f_n_mag * c
-            n_s_hat = np.array([[0.0, -n_s[2], n_s[1]], [n_s[2], 0.0, -n_s[0]], [-n_s[1], n_s[0], 0.0]])
-            f_p_hat = np.array([[0.0, -f_p[2], f_p[1]], [f_p[2], 0.0, -f_p[0]], [-f_p[1], f_p[0], 0.0]])
-            r_s_hat = np.array([[0.0, -r_s[2], r_s[1]], [r_s[2], 0.0, -r_s[0]], [-r_s[1], r_s[0], 0.0]])
-
-            # RP Rotation - RP Rotation geometric stiffness
-            K_geo[np.ix_(rp_dofs[nDim : nDim + nRot], rp_dofs[nDim : nDim + nRot])] += f_p_hat @ r_s_hat
-
-            # Force-rotation coupling geometric stiffness
-            for i in range(len(p_nodes)):
-                K_geo[np.ix_(p_dofs[i * nDim : (i + 1) * nDim], rp_dofs[nDim : nDim + nRot])] += (
-                    -f_n_mag * N_vec[i] * n_s_hat
-                )
-
-            K_geo[np.ix_(rp_dofs[0:nDim], rp_dofs[nDim : nDim + nRot])] += f_n_mag * n_s_hat
-
-            # Write to global sparse views
-            K_total = K_mat + K_geo
+            # Consistent tangent of the frozen-geometry residual
+            K_total = self._penaltyParameter * np.outer(dg_dU, dg_dU)
             K.K_pp[idx] += K_total[np.ix_(p_dofs, p_dofs)]
             K.K_prp[idx] += K_total[np.ix_(p_dofs, rp_dofs)]
             K.K_rpp[idx] += K_total[np.ix_(rp_dofs, p_dofs)]

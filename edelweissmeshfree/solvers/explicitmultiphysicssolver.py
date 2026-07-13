@@ -25,6 +25,7 @@ from edelweissmeshfree.solvers.base.nonlinearsolverbase import (
     BaseNonlinearSolver,
     RestartHistoryManager,
 )
+from edelweissmeshfree.stepactions.dirichlet import Dirichlet as MeshfreeDirichlet
 from edelweissmeshfree.stepactions.particledistributedload import (
     ParticleDistributedLoad,
 )
@@ -128,19 +129,12 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         particles = list(model.particles.values())
         constraints = list(model.constraints.values())
 
-        elements_with_inertia = [
-            el
-            for el in model.elements.values()
-            if hasattr(el, "computeLumpedInertia")
-            and hasattr(el, "nDof")
-            and el.nDof > 0
-            and hasattr(el, "getStructure")
-        ]
-        elements_with_momentum = [
-            el
-            for el in model.elements.values()
-            if hasattr(el, "computeMomentum") and hasattr(el, "nDof") and el.nDof > 0 and hasattr(el, "getStructure")
-        ]
+        # Standard FE elements (e.g. PointMass) contributing lumped inertia
+        # and momentum via the BaseElement interface.
+        dynamicElements = [el for el in model.elements.values() if el.nDof > 0]
+
+        self.reducedNodeSets = {}
+        self._warnedAboutLoadedMasslessDofs = False
 
         try:
             for timeStep in timeStepper.generateTimeStep():
@@ -176,12 +170,9 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                         M,
                         momentum,
                         timeStep,
-                        elements_with_inertia,
-                        elements_with_momentum,
+                        dynamicElements,
                     )
-                    # prevent division close to zero:
-                    M[M < 1e-12] = 1e-12
-                    M_inv = np.reciprocal(M)
+                    M_inv = self._invertLumpedMass(M, P_Ext - P_Int)
                     v_np_one_half[:] = momentum * M_inv
 
                 else:
@@ -205,16 +196,14 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
                 if dirichlets:
                     for dirichlet in dirichlets:
-                        if not hasattr(self, "reducedNodeSets"):
-                            continue
                         dirichletNodes = self.reducedNodeSets.get(dirichlet.nSet.name)
                         if dirichletNodes is None:
                             continue
 
                         indices = self._findDirichletIndices(theDofManager, dirichlet, dirichletNodes)
-                        try:
+                        if isinstance(dirichlet, MeshfreeDirichlet):
                             delta = dirichlet.getDelta(timeStep, dirichletNodes).flatten()
-                        except TypeError:
+                        else:
                             delta = dirichlet.getDelta(timeStep).flatten()
 
                         dU_np[indices] = delta
@@ -245,10 +234,8 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                             # Cache the current velocity directly on the node object for standard elements
                             if field_name == "displacement":
                                 node.current_velocity = v_np_one_half[dof_indices].copy()
-                                node._velocity_initialized = True
                             elif field_name == "rotation":
                                 node.current_angular_velocity = v_np_one_half[dof_indices].copy()
-                                node._velocity_initialized = True
 
                 for body in model.rigidBodies.values():
                     body.updateKinematics(timeStep)
@@ -294,12 +281,9 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                     M,
                     momentum,
                     timeStep,
-                    elements_with_inertia,
-                    elements_with_momentum,
+                    dynamicElements,
                 )
-                # prevent division close to zero:
-                M[M < 1e-12] = 1e-12
-                M_inv = np.reciprocal(M)
+                M_inv = self._invertLumpedMass(M, P_Ext - P_Int)
 
                 # For RKPM omitting this step and simple taking v_np_one_half from previous step leads to way less dissipative results
                 if reinitializationOfVelocitiesFromMomentum:
@@ -479,8 +463,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         M: DofVector,
         Mv: DofVector,
         timeStep,
-        elements_with_inertia: list = None,
-        elements_with_momentum: list = None,
+        dynamicElements: list = None,
     ):
         """Compute the system vectors."""
 
@@ -491,25 +474,66 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             Mv,
         )
 
-        # Accumulate mass and internal forces from standard FE elements (like PointMass)
-        if elements_with_inertia:
-            for el in elements_with_inertia:
+        # Accumulate mass and momentum from standard FE elements (like PointMass)
+        if dynamicElements:
+            for el in dynamicElements:
+                if el not in M.entitiesInDofVector:
+                    continue
                 Me = np.zeros(el.nDof)
                 el.computeLumpedInertia(Me)
-                if el in M.entitiesInDofVector:
-                    M[el] += Me
+                M[el] += Me
 
-        if elements_with_momentum:
-            for el in elements_with_momentum:
                 Mv_e = np.zeros(el.nDof)
                 el.computeMomentum(Mv_e)
-                if el in Mv.entitiesInDofVector:
-                    Mv[el] += Mv_e
+                Mv[el] += Mv_e
 
         self._computeParticleDistributedLoads(particleDistributedLoads, P_Ext, timeStep)
         self._computeConstraints(constraints, P_Ext, timeStep)
 
         return P_Int, P_Ext, M, Mv
+
+    def _invertLumpedMass(self, M: DofVector, residual: np.ndarray) -> np.ndarray:
+        """Invert the lumped mass vector entry-wise, clamping (numerically)
+        massless DOFs to a mass of 1e-12 to prevent division by zero.
+
+        The clamp is part of the established discretization behavior: with
+        nodal integration, weakly covered kernel nodes can carry a vanishing
+        mass but still receive internal forces. However, a *significant*
+        unbalanced force on a massless DOF indicates a modeling error (e.g.,
+        contact reactions on a rigid body without mass/inertia), for which a
+        warning is issued once, since the clamp then produces meaningless
+        accelerations of order 1e12.
+
+        Parameters
+        ----------
+        M
+            The global lumped mass vector.
+        residual
+            The current unbalanced force vector (P_Ext - P_Int), used for the
+            massless-DOF diagnostic.
+
+        Returns
+        -------
+        numpy.ndarray
+            The entry-wise inverse of the (clamped) lumped mass vector.
+        """
+        M_arr = np.asarray(M)
+        massless = M_arr < 1e-12
+        M_inv = 1.0 / np.where(massless, 1e-12, M_arr)
+
+        if not self._warnedAboutLoadedMasslessDofs and massless.any():
+            maxUnbalancedForce = np.max(np.abs(np.asarray(residual)[massless]))
+            if maxUnbalancedForce > 1e-8:
+                self.journal.message(
+                    f"Significant unbalanced forces (max. {maxUnbalancedForce:.3e}) act on DOFs with "
+                    "(numerically) zero mass; the resulting accelerations are meaningless. Check that "
+                    "all loaded entities carry mass/inertia or are driven kinematically.",
+                    self.identification,
+                    level=0,
+                )
+                self._warnedAboutLoadedMasslessDofs = True
+
+        return M_inv
 
     @performancetiming.timeit("update system")
     def updateSystem(self, particles, totalTime, dT, dU: DofVector):

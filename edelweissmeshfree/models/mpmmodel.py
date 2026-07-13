@@ -78,7 +78,6 @@ class MPMModel(FEModel):
         self.meshfreeKernelFunctions = {}  #: The collection of MeshfreeKernelFunctions in the present model.
         self.particleKernelDomains = {}  #: The collection of ParticleKernelDomains in the present model.
         self.vertexSets = {}  #: The collection of VertexSets for per particle in the present model.
-        self.rigidBodies = {}  #: The collection of RigidBodies in the present model.
 
         super().__init__(dimension)
 

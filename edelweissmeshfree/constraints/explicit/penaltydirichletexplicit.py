@@ -28,23 +28,13 @@ class PenaltyDirichletExplicit(MPMConstraintBase):
         self._fieldSize = getFieldSize(field, self._domainSize)
 
         self._prescribedStepDelta = {int(k): float(v) for k, v in values.items()}
-        self._f_t = f_t if f_t is not None else lambda x: x
+        # By default, use the full prescribed value in explicit simulations
+        # (consistent with ParticlePenaltyWeakDirichletExplicit).
+        self._f_t = f_t if f_t is not None else lambda x: 1.0
 
         self.penaltyForce = np.zeros(self._fieldSize)
         self.perNodePenaltyForce = np.zeros((len(self._nodes), self._fieldSize))
         self.isActive = True
-        self._node_idcs = {}
-
-    def checkAndUpdate(self, particles: list, model, timeStep, currentParticleManagers: list) -> bool:
-        hasChanged = False
-        if not self._node_idcs:
-            if self._field in model.dofManager.idcsOfFieldsInDofVector:
-                field_offset = model.dofManager.idcsOfFieldsInDofVector[self._field]
-                for n in self._nodes:
-                    node_idx = model.dofManager._nodesWithFields.index(n)
-                    self._node_idcs[n] = field_offset[node_idx] * self._fieldSize
-            hasChanged = True
-        return hasChanged
 
     @property
     def name(self) -> str:

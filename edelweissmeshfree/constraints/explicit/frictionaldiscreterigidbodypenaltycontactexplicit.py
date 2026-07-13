@@ -57,7 +57,7 @@ class FrictionalDiscreteRigidBodyPenaltyContactExplicit(DiscreteRigidBodyPenalty
             v_p = np.zeros(self._domainSize)
             N = p.getInterpolationVector(coord).flatten()
             for j, kf in enumerate(p.kernelFunctions):
-                if getattr(kf.node, "_velocity_initialized", False):
+                if kf.node.current_velocity is not None:
                     v_p += N[j] * kf.node.current_velocity
 
             # 2. Rigid Body Velocity at contact point

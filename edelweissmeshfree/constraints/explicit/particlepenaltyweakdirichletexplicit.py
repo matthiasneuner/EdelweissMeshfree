@@ -99,9 +99,8 @@ class ParticlePenaltyWeakDirichletExplicit(MPMConstraintBase):
         pass
 
     def updateConnectivity(self, model):
-        nodes = {
-            n: i for i, n in enumerate(set(kf.node for p in self._constrainedParticles for kf in p.kernelFunctions))
-        }
+        uniqueNodes = set(kf.node for p in self._constrainedParticles for kf in p.kernelFunctions)
+        nodes = {n: i for i, n in enumerate(sorted(uniqueNodes, key=lambda n: n.label))}
 
         hasChanged = False
         if nodes != self._nodes:
@@ -130,7 +129,7 @@ class ParticlePenaltyWeakDirichletExplicit(MPMConstraintBase):
                     constrainedCoordinates = [p.getCenterCoordinates()]
 
                 for constrainedCoordinate in constrainedCoordinates:
-                    N = p.getInterpolationVector(constrainedCoordinate)
+                    N = p.getInterpolationVector(constrainedCoordinate).flatten()
                     nodeIdcs = [self._nodes[kf.node] for kf in p.kernelFunctions]
 
                     # Compute actual displacement

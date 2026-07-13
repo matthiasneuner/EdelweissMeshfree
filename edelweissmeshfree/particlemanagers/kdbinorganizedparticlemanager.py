@@ -223,30 +223,35 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
     def signalizeKernelFunctionUpdate(self) -> None:
         self._theBins = _FastKDBinOrganizer(list(self._meshfreeKernelFunctions), self._dimension)
 
+    def _updateBondedKernelFunctionPositions(self) -> None:
+        """Move the kernel functions to their bonded particles' current
+        positions (optionally with a random shift) and rebuild the bins."""
+        self._journal.message("Updating kernel function positions...", "ParticleManager")
+        for particle, kernelFunction in zip(self._particles, self._meshfreeKernelFunctions):
+            particleCoordinates = particle.getCenterCoordinates()
+
+            if self._randomlyShiftPartliceShapeFunctions:
+                if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
+                    particleVol = particle.getVolumeUndeformed()
+                    particleSize = particleVol ** (1.0 / self._dimension)
+
+                    randdisp = (
+                        (np.random.rand(self._dimension) - 0.5)
+                        * np.sqrt(particle.getVolumeUndeformed())
+                        * self._randomlyShiftPartliceShapeFunctions
+                        * particleSize
+                    )
+                    particleCoordinates += randdisp
+
+            kernelFunction.moveTo(particleCoordinates)
+
+        self.signalizeKernelFunctionUpdate()
+
     def updateConnectivity(self) -> bool:
         hasChanged = False
 
         if self._bondParticlesToKernelFunctions:
-            self._journal.message("Updating kernel function positions...", "ParticleManager")
-            for particle, kernelFunction in zip(self._particles, self._meshfreeKernelFunctions):
-                particleCoordinates = particle.getCenterCoordinates()
-
-                if self._randomlyShiftPartliceShapeFunctions:
-                    if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
-                        particleVol = particle.getVolumeUndeformed()
-                        particleSize = particleVol ** (1.0 / self._dimension)
-
-                        randdisp = (
-                            (np.random.rand(self._dimension) - 0.5)
-                            * np.sqrt(particle.getVolumeUndeformed())
-                            * self._randomlyShiftPartliceShapeFunctions
-                            * particleSize
-                        )
-                        particleCoordinates += randdisp
-
-                kernelFunction.moveTo(particleCoordinates)
-
-            self.signalizeKernelFunctionUpdate()
+            self._updateBondedKernelFunctionPositions()
 
         # Capture variables for closure
         all_kernels = self._meshfreeKernelFunctions

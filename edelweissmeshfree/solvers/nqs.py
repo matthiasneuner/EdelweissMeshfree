@@ -390,6 +390,9 @@ class NonlinearQuasistaticSolver(BaseNonlinearImplicitSolver):
                         theDofManager.writeDofVectorToNodeField(P, field, "P")
                         model.nodeFields[field.name].copyEntriesFromOther(field)
 
+                    for c in constraints:
+                        c.acceptLastState()
+
                     for rb in model.rigidBodies.values():
                         rb.updateKinematics(timeStep)
                     model.advanceToTime(timeStep.totalTime)
