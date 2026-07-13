@@ -107,8 +107,6 @@ def FrictionalDiscreteRigidBodyPenaltyContactExplicitFactory(
     doProximityCheck: bool = True,
     proximityFactor: float = 2.0,
 ):
-    constraints = []
-
     # Get particles from collection
     if isinstance(particleCollection, EntityBasedSurface):
         elements = particleCollection.getEntities()
@@ -130,6 +128,8 @@ def FrictionalDiscreteRigidBodyPenaltyContactExplicitFactory(
         doProximityCheck=doProximityCheck,
         proximityFactor=proximityFactor,
     )
-    constraints.append(c)
+    # Automatically register in the model
+    model.constraints[name] = c
+    model.constraintSets[name] = c
 
-    return constraints
+    return c

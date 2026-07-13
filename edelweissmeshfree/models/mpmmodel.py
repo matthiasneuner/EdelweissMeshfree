@@ -127,18 +127,22 @@ class MPMModel(FEModel):
                         kf.node.fields[field] = FieldVariable(kf.node, field)
 
     def _populateNodeFieldVariablesFromDiscreteRigidBodies(self):
-        """Creates FieldVariables on the RP node of each discrete rigid body."""
+        """Creates FieldVariables on the RP node and surface nodes of each discrete rigid body."""
         from edelweissfe.config.phenomena import getFieldSize
         from edelweissfe.variables.fieldvariable import FieldVariable
 
         for body in self.rigidBodies.values():
-            if body.rpNode is None:
-                continue
-            rpNode = body.rpNode
-            # Activate the same fields that the rigid body uses (displacement + rotation)
-            for field in ("displacement", "rotation"):
-                if getFieldSize(field, self.domainSize) > 0 and field not in rpNode.fields:
-                    rpNode.fields[field] = FieldVariable(rpNode, field)
+            nodes_to_activate = []
+            if body.rpNode is not None:
+                nodes_to_activate.append(body.rpNode)
+
+            # Ensure surface nodes are registered in the global field space for visualization
+            nodes_to_activate.extend(body.getVisualizationNodes())
+
+            for node in nodes_to_activate:
+                for field in ("displacement", "rotation"):
+                    if getFieldSize(field, self.domainSize) > 0 and field not in node.fields:
+                        node.fields[field] = FieldVariable(node, field)
 
     def _prepareVariablesAndFields(self, journal):
         """Prepare all variables and fields for a simulation.

@@ -155,11 +155,46 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
     def assignAdditionalScalarVariables(self, scalarVariables: list):
         pass
 
+    def _querySurface(self, coords, proximity_factor=None):
+        if not hasattr(self, "_query_engine") or self._query_engine is None:
+            from edelweissmeshfree.utils.discretesurfacequery import (
+                DiscreteSurfaceQuery,
+            )
+
+            if getattr(self.rigidBody, "surface_mesh", None) is None:
+                raise RuntimeError("RigidBody has no surface_mesh to query.")
+            self._query_engine = DiscreteSurfaceQuery(mesh=self.rigidBody.surface_mesh)
+
+        n_points = coords.shape[0]
+        if proximity_factor is not None:
+            curr_min, curr_max = self.rigidBody.getAABB()
+            aabb_min = curr_min - proximity_factor
+            aabb_max = curr_max + proximity_factor
+            in_aabb = np.all((coords >= aabb_min) & (coords <= aabb_max), axis=1)
+            active_indices = np.where(in_aabb)[0]
+            if len(active_indices) == 0:
+                return np.full(n_points, np.inf), np.zeros((n_points, 3))
+            coords_to_query = coords[active_indices]
+        else:
+            coords_to_query = coords
+            active_indices = np.arange(n_points)
+
+        u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
+        active_dists, active_normals = self._query_engine.query(
+            coords_to_query, translation=u_rp, rotation_matrix=R, rotation_center=rp_initial
+        )
+
+        dists = np.full(n_points, np.inf)
+        dists[active_indices] = active_dists
+        normals = np.zeros((n_points, 3))
+        normals[active_indices] = active_normals
+        return dists, normals
+
     def updateConnectivity(self, model):
         """Dynamic proximity check at start of step to find candidate particles."""
         coords = np.array([p.getCenterCoordinates() for p in self._particles])
         u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
-        dists, _ = self.rigidBody.querySurface(coords, proximity_factor=self.proximityFactor)
+        dists, _ = self._querySurface(coords, proximity_factor=self.proximityFactor)
 
         active_mask = dists < self.proximityFactor
         new_candidates = [p for i, p in enumerate(self._particles) if active_mask[i]]
@@ -283,7 +318,7 @@ class DiscreteRigidBodyPenaltyContact(MPMConstraintBase):
 
         # Vectorized surface query
         coords = np.array([p.getCenterCoordinates() for p in self._candidates])
-        dists, normals = self.rigidBody.querySurface(coords, proximity_factor=self.proximityFactor)
+        dists, normals = self._querySurface(coords, proximity_factor=self.proximityFactor)
 
         for idx, p in enumerate(self._candidates):
             d0 = dists[idx]

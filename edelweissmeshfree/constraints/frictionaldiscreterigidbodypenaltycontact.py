@@ -82,7 +82,7 @@ class FrictionalDiscreteRigidBodyPenaltyContact(DiscreteRigidBodyPenaltyContact)
 
         # Vectorized surface query
         coords = np.array([p.getCenterCoordinates() for p in self._candidates])
-        dists, normals = self.rigidBody.querySurface(coords, proximity_factor=self.proximityFactor)
+        dists, normals = self._querySurface(coords, proximity_factor=self.proximityFactor)
 
         for idx, p in enumerate(self._candidates):
             d0 = dists[idx]

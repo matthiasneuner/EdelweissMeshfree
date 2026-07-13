@@ -67,6 +67,10 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
         self.vertexIDs = vertexIDs
         self._penaltyParameter = penaltyParameter
         self._doProximityCheck = doProximityCheck
+
+        # The explicit solver filters active constraints based on the `active` attribute.
+        # This contact constraint should always be considered active.
+        self.isActive = True
         self.proximityFactor = proximityFactor
 
         self._aabb_min = None
@@ -164,6 +168,41 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
 
         return hasChanged
 
+    def _querySurface(self, coords, proximity_factor=None):
+        if not hasattr(self, "_query_engine") or self._query_engine is None:
+            from edelweissmeshfree.utils.discretesurfacequery import (
+                DiscreteSurfaceQuery,
+            )
+
+            if getattr(self.rigidBody, "surface_mesh", None) is None:
+                raise RuntimeError("RigidBody has no surface_mesh to query.")
+            self._query_engine = DiscreteSurfaceQuery(mesh=self.rigidBody.surface_mesh)
+
+        n_points = coords.shape[0]
+        if proximity_factor is not None:
+            curr_min, curr_max = self.rigidBody.getAABB()
+            aabb_min = curr_min - proximity_factor
+            aabb_max = curr_max + proximity_factor
+            in_aabb = np.all((coords >= aabb_min) & (coords <= aabb_max), axis=1)
+            active_indices = np.where(in_aabb)[0]
+            if len(active_indices) == 0:
+                return np.full(n_points, np.inf), np.zeros((n_points, 3))
+            coords_to_query = coords[active_indices]
+        else:
+            coords_to_query = coords
+            active_indices = np.arange(n_points)
+
+        u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
+        active_dists, active_normals = self._query_engine.query(
+            coords_to_query, translation=u_rp, rotation_matrix=R, rotation_center=rp_initial
+        )
+
+        dists = np.full(n_points, np.inf)
+        dists[active_indices] = active_dists
+        normals = np.zeros((n_points, 3))
+        normals[active_indices] = active_normals
+        return dists, normals
+
     def applyConstraint(self, PExt: np.ndarray, timeStep: TimeStep):
         """
         Applies penalty forces to the global external force vector for penetrating particles.
@@ -175,7 +214,7 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
         timeStep : TimeStep
             The current time step information.
         """
-        if not self.isActive or not self.particles:
+        if not self.active or not self.particles:
             return
 
         # 1. Gather all query coordinates and map them back to particles
@@ -205,7 +244,7 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
 
         # 2. Query Rigid Body (Handles Broadphase AABB internally)
         proximity = self.proximityFactor if self._doProximityCheck else None
-        dists, normals = self.rigidBody.querySurface(coords, proximity_factor=proximity)
+        dists, normals = self._querySurface(coords, proximity_factor=proximity)
 
         # 3. Filter penetrating (dists < 0 evaluates to False for np.inf)
         penetrating_mask = dists < 0
@@ -232,7 +271,7 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
         # 6. Apply to RP
         rp_offset = self._node_to_offset[self.rigidBodyRPNode]
         if self._domainSize == 3:
-            u_rp, _, rp_initial = self.rigidBody.getCurrentKinematics()
+            u_rp, R, rp_initial = self.rigidBody.getCurrentKinematics()
             rp_pos = rp_initial + u_rp
 
             r = pen_coords - rp_pos
