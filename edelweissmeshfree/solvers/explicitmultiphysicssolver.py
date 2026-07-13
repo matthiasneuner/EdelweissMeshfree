@@ -169,11 +169,23 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                         P_Ext,
                         M,
                         momentum,
+                        v_np_one_half,
                         timeStep,
                         dynamicElements,
                     )
                     M_inv = self._invertLumpedMass(M, P_Ext - P_Int)
                     v_np_one_half[:] = momentum * M_inv
+
+                    # Seed the initial velocity of mass-bearing elements (e.g. PointMass,
+                    # the mass carrier of a discrete rigid body reference point) as a
+                    # one-time initial condition. Elements declare their initial velocity
+                    # rather than contributing to the per-step momentum remap; note that a
+                    # discrete rigid body's velocity is therefore not reconstructed by the
+                    # momentum reinitialisation and requires reinitializationOfVelocitiesFromMomentum=False.
+                    elementIdcs = theDofManager.idcsOfElementsInDofVector
+                    for el in dynamicElements:
+                        if el in elementIdcs:
+                            v_np_one_half[elementIdcs[el]] = el.initialVelocity
 
                 else:
                     # +---------------------+
@@ -231,12 +243,6 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                             dof_indices = field_var_map[fv]
                             node_field["U"][i] += dU_np[dof_indices]
 
-                            # Cache the current velocity directly on the node object for standard elements
-                            if field_name == "displacement":
-                                node.current_velocity = v_np_one_half[dof_indices].copy()
-                            elif field_name == "rotation":
-                                node.current_angular_velocity = v_np_one_half[dof_indices].copy()
-
                 for body in model.rigidBodies.values():
                     body.updateKinematics(timeStep)
 
@@ -280,6 +286,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                     P_Ext,
                     M,
                     momentum,
+                    v_np_one_half,
                     timeStep,
                     dynamicElements,
                 )
@@ -462,10 +469,18 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         P_Ext: DofVector,
         M: DofVector,
         Mv: DofVector,
+        velocity: DofVector,
         timeStep,
         dynamicElements: list = None,
     ):
-        """Compute the system vectors."""
+        """Compute the system vectors.
+
+        ``velocity`` is the current grid velocity vector (``v_(n+1/2)``); it is
+        passed to the constraints so that velocity-dependent constraints (e.g.
+        frictional contact) can read the velocity at their own DOFs, the same
+        way they receive their force slice -- no per-node velocity state is
+        stored on the nodes.
+        """
 
         self._computeParticlesExplicit(
             particles,
@@ -474,7 +489,10 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             Mv,
         )
 
-        # Accumulate mass and momentum from standard FE elements (like PointMass)
+        # Accumulate the lumped mass/inertia of standard FE elements (like PointMass),
+        # so the reference point gets its dynamic response (a = F / M) each step. The
+        # momentum remap is a particle/cell concern; elements seed their initial
+        # velocity once (see solveStep) instead of contributing momentum here.
         if dynamicElements:
             for el in dynamicElements:
                 if el not in M.entitiesInDofVector:
@@ -483,12 +501,8 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                 el.computeLumpedInertia(Me)
                 M[el] += Me
 
-                Mv_e = np.zeros(el.nDof)
-                el.computeMomentum(Mv_e)
-                Mv[el] += Mv_e
-
         self._computeParticleDistributedLoads(particleDistributedLoads, P_Ext, timeStep)
-        self._computeConstraints(constraints, P_Ext, timeStep)
+        self._computeConstraints(constraints, P_Ext, velocity, timeStep)
 
         return P_Int, P_Ext, M, Mv
 
@@ -562,7 +576,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         )
 
     @performancetiming.timeit("computation constraints")
-    def _computeConstraints(self, constraints: list, P: DofVector, timeStep: TimeStep):
+    def _computeConstraints(self, constraints: list, P: DofVector, velocity: DofVector, timeStep: TimeStep):
         """Evaluate all constraints.
 
         Parameters
@@ -571,18 +585,32 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             The list of constraints to be evaluated.
         P
             The current global flux vector.
+        velocity
+            The current global grid velocity vector. Each constraint is handed
+            its own DOF slice (``velocity[c]``), laid out identically to its
+            force slice, so velocity-dependent constraints can read velocities
+            at their DOFs without any per-node velocity state.
         timeStep
             The current time increment.
         """
+        # The velocity slice handed to each constraint must be laid out exactly like
+        # its force slice, so it is indexed with the same entity->DOF map that P uses
+        # to scatter forces (P is rebuilt on re-discretisation, its snapshot is current).
+        # If a re-discretisation this step has resized the system, the current-grid
+        # velocity is only available after the momentum remap, so fall back to zero
+        # velocity for this transitional step.
+        v_values = np.asarray(velocity)
+        velocityMatchesLayout = v_values.shape[0] == P.shape[0]
         for c in constraints:
             if c.active:
                 if c.nDof == 0:
                     # Kinematic constraints (e.g. RigidBodyKinematicTieExplicit) have nDof=0 and
                     # directly update coordinates / nodal fields rather than contributing forces.
-                    c.applyConstraint(None, timeStep)
+                    c.applyConstraint(None, None, timeStep)
                 else:
                     Pc = np.zeros(c.nDof)
-                    c.applyConstraint(Pc, timeStep)
+                    Vc = v_values[P.entitiesInDofVector[c]] if velocityMatchesLayout else np.zeros(c.nDof)
+                    c.applyConstraint(Pc, Vc, timeStep)
                     P[c] += Pc
 
     @performancetiming.timeit("updating dof structure")

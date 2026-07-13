@@ -109,7 +109,7 @@ class ParticlePenaltyWeakDirichletExplicit(MPMConstraintBase):
         self._nodes = nodes
         return hasChanged
 
-    def applyConstraint(self, PExt: np.ndarray, timeStep: TimeStep):
+    def applyConstraint(self, PExt: np.ndarray, V: np.ndarray, timeStep: TimeStep):
         nodeField = self._model.nodeFields.get(self._field)
         if nodeField is None or "U" not in nodeField:
             return

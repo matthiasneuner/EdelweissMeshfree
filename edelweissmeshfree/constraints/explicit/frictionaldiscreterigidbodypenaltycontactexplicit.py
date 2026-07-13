@@ -26,22 +26,24 @@ class FrictionalDiscreteRigidBodyPenaltyContactExplicit(DiscreteRigidBodyPenalty
         self.totalNormalForce = np.zeros(3)
         self.totalFrictionForce = np.zeros(3)
 
-    def applyConstraint(self, PExt, timeStep):
+    def applyConstraint(self, PExt, V, timeStep):
         # Reset forces to zero in case there is no contact/penetration in this step
         self.totalNormalForce = np.zeros(3)
         self.totalFrictionForce = np.zeros(3)
-        super().applyConstraint(PExt, timeStep)
+        super().applyConstraint(PExt, V, timeStep)
 
-    def _addFrictionForces(self, forces, pen_coords, pen_normals, pen_indices, g, particle_mapping):
+    def _addFrictionForces(self, forces, V, pen_coords, pen_normals, pen_indices, g, particle_mapping):
         if self.frictionCoefficient <= 0.0:
             return forces
 
-        # Get rigid body velocities
-        v_rp = self.rigidBodyRPNode.current_velocity
+        # Rigid body velocities read from this constraint's velocity slice V,
+        # which is laid out like PExt (indexable via self._node_to_offset).
+        rp_offset = self._node_to_offset[self.rigidBodyRPNode]
+        v_rp = V[rp_offset : rp_offset + self._domainSize]
 
         omega = np.zeros(3)
         if self._domainSize == 3:
-            omega = self.rigidBodyRPNode.current_angular_velocity
+            omega[:] = V[rp_offset + self._domainSize : rp_offset + self._domainSize + 3]
 
         u_rp, _, rp_initial = self.rigidBody.getCurrentKinematics()
         rp_pos = rp_initial + u_rp
@@ -53,12 +55,13 @@ class FrictionalDiscreteRigidBodyPenaltyContactExplicit(DiscreteRigidBodyPenalty
             coord = pen_coords[i]
             normal = pen_normals[i]
 
-            # 1. Particle Velocity
+            # 1. Particle velocity, interpolated from the supporting nodes'
+            #    velocities (read from V via their DOF offsets).
             v_p = np.zeros(self._domainSize)
             N = p.getInterpolationVector(coord).flatten()
             for j, kf in enumerate(p.kernelFunctions):
-                if kf.node.current_velocity is not None:
-                    v_p += N[j] * kf.node.current_velocity
+                offset = self._node_to_offset[kf.node]
+                v_p += N[j] * V[offset : offset + self._domainSize]
 
             # 2. Rigid Body Velocity at contact point
             if self._domainSize == 3:

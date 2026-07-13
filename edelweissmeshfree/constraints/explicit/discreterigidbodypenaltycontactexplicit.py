@@ -154,14 +154,20 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
 
         return hasChanged
 
-    def applyConstraint(self, PExt: np.ndarray, timeStep: TimeStep):
+    def applyConstraint(self, PExt: np.ndarray, V: np.ndarray, timeStep: TimeStep):
         """
         Applies penalty forces to the global external force vector for penetrating particles.
 
         Parameters
         ----------
         PExt : numpy.ndarray
-            The global external force vector. Modified in place.
+            The global external force vector (this constraint's DOF slice).
+            Modified in place.
+        V : numpy.ndarray
+            This constraint's DOF slice of the current grid velocity vector,
+            laid out identically to ``PExt`` (i.e. indexable with
+            ``self._node_to_offset``). Used by frictional subclasses; ignored
+            by the frictionless base.
         timeStep : TimeStep
             The current time step information.
         """
@@ -217,7 +223,7 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
 
         forces = self._penaltyParameter * g[:, np.newaxis] * pen_normals
 
-        forces = self._addFrictionForces(forces, pen_coords, pen_normals, pen_indices, g, particle_mapping)
+        forces = self._addFrictionForces(forces, V, pen_coords, pen_normals, pen_indices, g, particle_mapping)
 
         # 6. Apply to RP
         rp_offset = self._node_to_offset[self.rigidBodyRPNode]
@@ -249,7 +255,7 @@ class DiscreteRigidBodyPenaltyContactExplicit(MPMConstraintBase):
 
         self.reactionForce = np.sum(self._penaltyParameter * g)
 
-    def _addFrictionForces(self, forces, pen_coords, pen_normals, pen_indices, g, particle_mapping):
+    def _addFrictionForces(self, forces, V, pen_coords, pen_normals, pen_indices, g, particle_mapping):
         return forces
 
 

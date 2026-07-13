@@ -69,7 +69,7 @@ class PenaltyDirichletExplicit(MPMConstraintBase):
     def updateConnectivity(self, model) -> bool:
         return False
 
-    def applyConstraint(self, PExt: np.ndarray, timeStep):
+    def applyConstraint(self, PExt: np.ndarray, V: np.ndarray, timeStep):
         nodeField = self._model.nodeFields.get(self._field)
         if nodeField is None or "U" not in nodeField:
             return
