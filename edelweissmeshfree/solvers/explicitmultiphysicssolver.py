@@ -25,6 +25,7 @@ from edelweissmeshfree.solvers.base.nonlinearsolverbase import (
     BaseNonlinearSolver,
     RestartHistoryManager,
 )
+from edelweissmeshfree.stepactions.dirichlet import Dirichlet as MeshfreeDirichlet
 from edelweissmeshfree.stepactions.particledistributedload import (
     ParticleDistributedLoad,
 )
@@ -128,6 +129,14 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         particles = list(model.particles.values())
         constraints = list(model.constraints.values())
 
+        # Standard FE elements (e.g. PointMass) contributing lumped inertia
+        # and momentum via the BaseElement interface.
+        dynamicElements = [el for el in model.elements.values() if el.nDof > 0]
+
+        self.reducedNodeSets = {}
+        self.reducedNodeFields = {}
+        self._warnedAboutLoadedMasslessDofs = False
+
         try:
             for timeStep in timeStepper.generateTimeStep():
                 dT = timeStep.timeIncrement
@@ -151,11 +160,33 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                         theDofManager, model, mpmManagers, constraints
                     )
                     self.updateSystem(particles, timeStep.totalTime, dT, dU_np)
+                    for body in model.rigidBodies.values():
+                        body.updateKinematics(timeStep)
                     self.computeSystem(
-                        particles, activeConstraints, particleDistributedLoads, P_Int, P_Ext, M, momentum, timeStep
+                        particles,
+                        activeConstraints,
+                        particleDistributedLoads,
+                        P_Int,
+                        P_Ext,
+                        M,
+                        momentum,
+                        v_np_one_half,
+                        timeStep,
+                        dynamicElements,
                     )
-                    M_inv = np.reciprocal(M)
+                    M_inv = self._invertLumpedMass(M, P_Ext - P_Int)
                     v_np_one_half[:] = momentum * M_inv
+
+                    # Seed the initial velocity of mass-bearing elements (e.g. PointMass,
+                    # the mass carrier of a discrete rigid body reference point) as a
+                    # one-time initial condition. Elements declare their initial velocity
+                    # rather than contributing to the per-step momentum remap; note that a
+                    # discrete rigid body's velocity is therefore not reconstructed by the
+                    # momentum reinitialisation and requires reinitializationOfVelocitiesFromMomentum=False.
+                    elementIdcs = theDofManager.idcsOfElementsInDofVector
+                    for el in dynamicElements:
+                        if el in elementIdcs:
+                            v_np_one_half[elementIdcs[el]] = el.initialVelocity
 
                 else:
                     # +---------------------+
@@ -174,13 +205,50 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                             dU_np[indices] = v_np_one_half[indices] * dT  # (U_np - U_n) = v_(n+1/2) * dT
                         elif order == 1:  # Forward Euler
                             dU_np[indices] += a_n[indices] * dT
-
                 self._applyStepActionsAtIncrementStart(model, timeStep, dirichlets + bodyLoads)
+
+                if dirichlets:
+                    for dirichlet in dirichlets:
+                        dirichletNodes = self.reducedNodeSets.get(dirichlet.nSet.name)
+                        if dirichletNodes is None:
+                            continue
+
+                        indices = self._findDirichletIndices(theDofManager, dirichlet, dirichletNodes)
+                        if isinstance(dirichlet, MeshfreeDirichlet):
+                            delta = dirichlet.getDelta(timeStep, dirichletNodes).flatten()
+                        else:
+                            delta = dirichlet.getDelta(timeStep).flatten()
+
+                        dU_np[indices] = delta
+                        if dT > 0.0:
+                            v_np_one_half[indices] = delta / dT
 
                 # the solution increment to t_np is formulated in terms of the old discretization at t_n
                 # so for MPM and RKPM this call connects the old discretization with the shift to the new positions
                 # This is on contrast to FE, which can be exclusively computed in the new configuration using computeSystem(...) only
                 self.updateSystem(particles, timeStep.totalTime, dT, dU_np)
+
+                # Update nodal variables directly so that constraints and outputs can access their total values.
+                # dU_np is scattered into the reduced (active-subset) NodeField that theDofManager was built
+                # from, then accumulated into the persistent, full NodeField -- the same reduced/persistent
+                # NodeField idiom used by nqs.py and generalizedalpha.py.
+                for field_name in options["field orders"].keys():
+                    reduced_field = self.reducedNodeFields.get(field_name)
+                    if reduced_field is None:
+                        continue
+
+                    persistent_field = model.nodeFields.get(field_name)
+                    if persistent_field is None:
+                        continue
+                    if "U" not in persistent_field:
+                        persistent_field.createFieldValueEntry("U")
+
+                    theDofManager.writeDofVectorToNodeField(dU_np, reduced_field, "dU")
+                    persistent_field.addEntriesFromOther(reduced_field, {"dU": "U"})
+
+                for body in model.rigidBodies.values():
+                    body.updateKinematics(timeStep)
+
                 model.advanceToTime(timeStep.totalTime)
 
                 # A
@@ -214,11 +282,18 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
                 P_Int[:] = P_Ext[:] = M[:] = momentum[:] = 0.0
                 self.computeSystem(
-                    particles, activeConstraints, particleDistributedLoads, P_Int, P_Ext, M, momentum, timeStep
+                    particles,
+                    activeConstraints,
+                    particleDistributedLoads,
+                    P_Int,
+                    P_Ext,
+                    M,
+                    momentum,
+                    v_np_one_half,
+                    timeStep,
+                    dynamicElements,
                 )
-                # prevent division close to zero:
-                M[M < 1e-12] = 1e-12
-                M_inv = np.reciprocal(M)
+                M_inv = self._invertLumpedMass(M, P_Ext - P_Int)
 
                 # For RKPM omitting this step and simple taking v_np_one_half from previous step leads to way less dissipative results
                 if reinitializationOfVelocitiesFromMomentum:
@@ -392,33 +467,22 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         self,
         particles: list,
         constraints: list,
-        particleDistributedLoads: list[ParticleDistributedLoad],
+        particleDistributedLoads: list,
         P_Int: DofVector,
         P_Ext: DofVector,
         M: DofVector,
         Mv: DofVector,
-        timeStep: TimeStep,
+        velocity: DofVector,
+        timeStep,
+        dynamicElements: list = None,
     ):
         """Compute the system vectors.
 
-        Parameters
-        ----------
-        particles
-            The list of particles to be evaluated.
-        constraints
-            The list of constraints to be applied.
-        particleDistributedLoads
-            The list of particle distributed loads to be applied.
-        P_Int
-            The global internal flux vector.
-        P_Ext
-            The global external flux vector.
-        M
-            The global lumped inertia vector.
-        Mv
-            The global momentum vector.
-        timeStep
-            The current time increment.
+        ``velocity`` is the current grid velocity vector (``v_(n+1/2)``); it is
+        passed to the constraints so that velocity-dependent constraints (e.g.
+        frictional contact) can read the velocity at their own DOFs, the same
+        way they receive their force slice -- no per-node velocity state is
+        stored on the nodes.
         """
 
         self._computeParticlesExplicit(
@@ -428,10 +492,65 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             Mv,
         )
 
+        # Accumulate the lumped mass/inertia of standard FE elements (like PointMass),
+        # so the reference point gets its dynamic response (a = F / M) each step. The
+        # momentum remap is a particle/cell concern; elements seed their initial
+        # velocity once (see solveStep) instead of contributing momentum here.
+        if dynamicElements:
+            for el in dynamicElements:
+                if el not in M.entitiesInDofVector:
+                    continue
+                Me = np.zeros(el.nDof)
+                el.computeLumpedInertia(Me)
+                M[el] += Me
+
         self._computeParticleDistributedLoads(particleDistributedLoads, P_Ext, timeStep)
-        self._computeConstraints(constraints, P_Ext, timeStep)
+        self._computeConstraints(constraints, P_Ext, velocity, timeStep)
 
         return P_Int, P_Ext, M, Mv
+
+    def _invertLumpedMass(self, M: DofVector, residual: np.ndarray) -> np.ndarray:
+        """Invert the lumped mass vector entry-wise, clamping (numerically)
+        massless DOFs to a mass of 1e-12 to prevent division by zero.
+
+        The clamp is part of the established discretization behavior: with
+        nodal integration, weakly covered kernel nodes can carry a vanishing
+        mass but still receive internal forces. However, a *significant*
+        unbalanced force on a massless DOF indicates a modeling error (e.g.,
+        contact reactions on a rigid body without mass/inertia), for which a
+        warning is issued once, since the clamp then produces meaningless
+        accelerations of order 1e12.
+
+        Parameters
+        ----------
+        M
+            The global lumped mass vector.
+        residual
+            The current unbalanced force vector (P_Ext - P_Int), used for the
+            massless-DOF diagnostic.
+
+        Returns
+        -------
+        numpy.ndarray
+            The entry-wise inverse of the (clamped) lumped mass vector.
+        """
+        M_arr = np.asarray(M)
+        massless = M_arr < 1e-12
+        M_inv = 1.0 / np.where(massless, 1e-12, M_arr)
+
+        if not self._warnedAboutLoadedMasslessDofs and massless.any():
+            maxUnbalancedForce = np.max(np.abs(np.asarray(residual)[massless]))
+            if maxUnbalancedForce > 1e-8:
+                self.journal.message(
+                    f"Significant unbalanced forces (max. {maxUnbalancedForce:.3e}) act on DOFs with "
+                    "(numerically) zero mass; the resulting accelerations are meaningless. Check that "
+                    "all loaded entities carry mass/inertia or are driven kinematically.",
+                    self.identification,
+                    level=0,
+                )
+                self._warnedAboutLoadedMasslessDofs = True
+
+        return M_inv
 
     @performancetiming.timeit("update system")
     def updateSystem(self, particles, totalTime, dT, dU: DofVector):
@@ -460,7 +579,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         )
 
     @performancetiming.timeit("computation constraints")
-    def _computeConstraints(self, constraints: list, P: DofVector, timeStep: TimeStep):
+    def _computeConstraints(self, constraints: list, P: DofVector, velocity: DofVector, timeStep: TimeStep):
         """Evaluate all constraints.
 
         Parameters
@@ -469,14 +588,33 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             The list of constraints to be evaluated.
         P
             The current global flux vector.
+        velocity
+            The current global grid velocity vector. Each constraint is handed
+            its own DOF slice (``velocity[c]``), laid out identically to its
+            force slice, so velocity-dependent constraints can read velocities
+            at their DOFs without any per-node velocity state.
         timeStep
             The current time increment.
         """
+        # The velocity slice handed to each constraint must be laid out exactly like
+        # its force slice, so it is indexed with the same entity->DOF map that P uses
+        # to scatter forces (P is rebuilt on re-discretisation, its snapshot is current).
+        # If a re-discretisation this step has resized the system, the current-grid
+        # velocity is only available after the momentum remap, so fall back to zero
+        # velocity for this transitional step.
+        v_values = np.asarray(velocity)
+        velocityMatchesLayout = v_values.shape[0] == P.shape[0]
         for c in constraints:
             if c.active:
-                Pc = np.zeros(c.nDof)
-                c.applyConstraint(Pc, timeStep)
-                P[c] += Pc
+                if c.nDof == 0:
+                    # Kinematic constraints (e.g. RigidBodyKinematicTieExplicit) have nDof=0 and
+                    # directly update coordinates / nodal fields rather than contributing forces.
+                    c.applyConstraint(None, None, timeStep)
+                else:
+                    Pc = np.zeros(c.nDof)
+                    Vc = v_values[P.entitiesInDofVector[c]] if velocityMatchesLayout else np.zeros(c.nDof)
+                    c.applyConstraint(Pc, Vc, timeStep)
+                    P[c] += Pc
 
     @performancetiming.timeit("updating dof structure")
     def _updateDofManager(self, theDofManager, constraints: list, particles: list):
@@ -518,14 +656,18 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
         activeNodesPersistent, _, reducedNodeFields, reducedNodeSets = self._assembleActiveDomain(list(), model)
 
+        self.reducedNodeSets = {ns.name: ns for ns in reducedNodeSets.values()}
+        self.reducedNodeFields = reducedNodeFields
+
         theDofManager = self._createDofManager(
-            reducedNodeFields.values(),
-            list(),
-            list(),
-            constraints,
-            list(),
-            list(),
-            particles,
+            nodeFields=list(reducedNodeFields.values()),
+            scalarVariables=[],
+            elements=list(model.elements.values()),
+            constraints=constraints,
+            nodeSets=list(reducedNodeSets.values()),
+            cells=[],
+            cellElements=[],
+            particles=particles,
             initializeVIJPattern=False,
             initializeAccumulatedNodalFluxesFieldwise=False,
             determiningIndexToHostObjectMappping=False,

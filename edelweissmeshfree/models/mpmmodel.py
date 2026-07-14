@@ -125,6 +125,27 @@ class MPMModel(FEModel):
                     if field not in kf.node.fields:
                         kf.node.fields[field] = FieldVariable(kf.node, field)
 
+    def _populateNodeFieldVariablesFromDiscreteRigidBodies(self):
+        """Creates FieldVariables on the RP node of each discrete rigid body.
+
+        The surface (visualization) nodes are deliberately *not* registered here:
+        they are not independent degrees of freedom -- they are fully determined
+        by the RP's kinematics -- so DofManager must never reserve DOF space for
+        them. Field output for a rigid body's surface motion should go through
+        FieldOutputController.addRigidBodyFieldOutput(), which reads
+        RigidBody.getVisualizationField() directly instead of a NodeField.
+        """
+        from edelweissfe.config.phenomena import getFieldSize
+        from edelweissfe.variables.fieldvariable import FieldVariable
+
+        for body in self.rigidBodies.values():
+            if body.rpNode is None:
+                continue
+
+            for field in ("displacement", "rotation"):
+                if getFieldSize(field, self.domainSize) > 0 and field not in body.rpNode.fields:
+                    body.rpNode.fields[field] = FieldVariable(body.rpNode, field)
+
     def _prepareVariablesAndFields(self, journal):
         """Prepare all variables and fields for a simulation.
 
@@ -142,6 +163,9 @@ class MPMModel(FEModel):
         if self.particleKernelDomains:
             journal.message("Activating fields on Nodes from Particles", self.identification)
             self._populateNodeFieldVariablesFromParticleKernelDomains()
+        if self.rigidBodies:
+            journal.message("Activating fields on Nodes from DiscreteRigidBodies", self.identification)
+            self._populateNodeFieldVariablesFromDiscreteRigidBodies()
 
         return super()._prepareVariablesAndFields(journal)
 

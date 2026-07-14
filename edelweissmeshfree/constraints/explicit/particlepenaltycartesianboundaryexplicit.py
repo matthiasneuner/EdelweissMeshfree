@@ -186,7 +186,7 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMConstraintBase):
 
         return hasChanged
 
-    def applyConstraint(self, PExt: np.ndarray, timeStep: TimeStep):
+    def applyConstraint(self, PExt: np.ndarray, V: np.ndarray, timeStep: TimeStep):
         """
         Applies the penalty force to the external force vector PExt.
         """

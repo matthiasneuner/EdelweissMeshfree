@@ -81,9 +81,17 @@ class _FastKDBinOrganizer:
         self._boundingBoxMax = np.max(self._maxs, axis=0) + 1e-12
 
         avg_size = np.mean(self._maxs - self._mins, axis=0)
+        avg_size = np.maximum(avg_size, 1e-12)
         self._binSize = avg_size / 2.0
 
         self._nBins = np.ceil((self._boundingBoxMax - self._boundingBoxMin) / self._binSize).astype(int)
+
+        # Clamp number of bins to avoid memory explosion when particles fly off
+        MAX_BINS = 250
+        for d in range(self._dimension):
+            if self._nBins[d] > MAX_BINS:
+                self._nBins[d] = MAX_BINS
+                self._binSize[d] = (self._boundingBoxMax[d] - self._boundingBoxMin[d]) / MAX_BINS
 
         self._strides = np.ones(3, dtype=int)
         if dimension >= 2:
@@ -97,6 +105,11 @@ class _FastKDBinOrganizer:
         # --- 3. Vectorized Bin Index Calculation ---
         min_indices = ((self._mins - self._boundingBoxMin) / self._binSize).astype(int)
         max_indices = ((self._maxs - self._boundingBoxMin) / self._binSize).astype(int)
+
+        # Clamp indices to valid range [0, nBins - 1]
+        for d in range(self._dimension):
+            min_indices[:, d] = np.clip(min_indices[:, d], 0, self._nBins[d] - 1)
+            max_indices[:, d] = np.clip(max_indices[:, d], 0, self._nBins[d] - 1)
 
         # --- 4. Fill Bins ---
         _, stride_y, stride_z = self._strides[0], self._strides[1], self._strides[2]
@@ -210,30 +223,35 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
     def signalizeKernelFunctionUpdate(self) -> None:
         self._theBins = _FastKDBinOrganizer(list(self._meshfreeKernelFunctions), self._dimension)
 
+    def _updateBondedKernelFunctionPositions(self) -> None:
+        """Move the kernel functions to their bonded particles' current
+        positions (optionally with a random shift) and rebuild the bins."""
+        self._journal.message("Updating kernel function positions...", "ParticleManager")
+        for particle, kernelFunction in zip(self._particles, self._meshfreeKernelFunctions):
+            particleCoordinates = particle.getCenterCoordinates()
+
+            if self._randomlyShiftPartliceShapeFunctions:
+                if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
+                    particleVol = particle.getVolumeUndeformed()
+                    particleSize = particleVol ** (1.0 / self._dimension)
+
+                    randdisp = (
+                        (np.random.rand(self._dimension) - 0.5)
+                        * np.sqrt(particle.getVolumeUndeformed())
+                        * self._randomlyShiftPartliceShapeFunctions
+                        * particleSize
+                    )
+                    particleCoordinates += randdisp
+
+            kernelFunction.moveTo(particleCoordinates)
+
+        self.signalizeKernelFunctionUpdate()
+
     def updateConnectivity(self) -> bool:
         hasChanged = False
 
         if self._bondParticlesToKernelFunctions:
-            self._journal.message("Updating kernel function positions...", "ParticleManager")
-            for particle, kernelFunction in zip(self._particles, self._meshfreeKernelFunctions):
-                particleCoordinates = particle.getCenterCoordinates()
-
-                if self._randomlyShiftPartliceShapeFunctions:
-                    if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
-                        particleVol = particle.getVolumeUndeformed()
-                        particleSize = particleVol ** (1.0 / self._dimension)
-
-                        randdisp = (
-                            (np.random.rand(self._dimension) - 0.5)
-                            * np.sqrt(particle.getVolumeUndeformed())
-                            * self._randomlyShiftPartliceShapeFunctions
-                            * particleSize
-                        )
-                        particleCoordinates += randdisp
-
-                kernelFunction.moveTo(particleCoordinates)
-
-            self.signalizeKernelFunctionUpdate()
+            self._updateBondedKernelFunctionPositions()
 
         # Capture variables for closure
         all_kernels = self._meshfreeKernelFunctions

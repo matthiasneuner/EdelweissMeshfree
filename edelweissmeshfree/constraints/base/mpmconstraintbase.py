@@ -138,3 +138,12 @@ class MPMConstraintBase(ABC, VIJEntityBase):
         timeStep
             The current step and total time.
         """
+
+    def acceptLastState(self):
+        """Accept the last computed state as the new converged state.
+
+        Called by the (implicit) solvers once an increment has converged.
+        History-dependent constraints (e.g., frictional contact) override
+        this method to commit their trial state; the default implementation
+        does nothing.
+        """

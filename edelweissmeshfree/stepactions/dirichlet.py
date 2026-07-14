@@ -84,9 +84,19 @@ class Dirichlet(DirichletBase):
     def updateStepAction(self, values, f_t: Callable[[float], float] = None):
         self.active = True
 
-        self._components = np.array([i for i in values.keys()])
+        # Integer keys (incl. numpy integers) are 0-based component indices;
+        # string keys follow the 1-based input-file convention.
+        components = []
+        for k in values.keys():
+            if isinstance(k, (int, np.integer)):
+                components.append(int(k))
+            elif isinstance(k, str):
+                components.append(int(k) - 1)
+            else:
+                raise TypeError(f"Invalid component key '{k}' (type {type(k).__name__}); expected int or str.")
+        self._components = np.array(components, dtype=int)
 
-        self._delta = np.array([values for values in values.values()])
+        self._delta = np.array(list(values.values()))
 
         if f_t is not None:
             self._amplitude = f_t

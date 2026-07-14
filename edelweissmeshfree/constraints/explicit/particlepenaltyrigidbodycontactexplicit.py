@@ -163,7 +163,7 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMConstraintBase)
 
         return hasChanged
 
-    def applyConstraint(self, PExt: np.ndarray, timeStep: TimeStep):
+    def applyConstraint(self, PExt: np.ndarray, V: np.ndarray, timeStep: TimeStep):
         """
         Applies penalty forces to the global external force vector.
 
