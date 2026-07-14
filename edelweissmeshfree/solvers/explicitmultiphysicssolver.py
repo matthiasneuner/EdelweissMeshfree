@@ -134,6 +134,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         dynamicElements = [el for el in model.elements.values() if el.nDof > 0]
 
         self.reducedNodeSets = {}
+        self.reducedNodeFields = {}
         self._warnedAboutLoadedMasslessDofs = False
 
         try:
@@ -227,21 +228,23 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                 # This is on contrast to FE, which can be exclusively computed in the new configuration using computeSystem(...) only
                 self.updateSystem(particles, timeStep.totalTime, dT, dU_np)
 
-                # Update nodal variables directly so that constraints and outputs can access their total values
-                field_var_map = theDofManager.idcsOfFieldVariablesInDofVector
+                # Update nodal variables directly so that constraints and outputs can access their total values.
+                # dU_np is scattered into the reduced (active-subset) NodeField that theDofManager was built
+                # from, then accumulated into the persistent, full NodeField -- the same reduced/persistent
+                # NodeField idiom used by nqs.py and generalizedalpha.py.
                 for field_name in options["field orders"].keys():
-                    node_field = model.nodeFields.get(field_name)
-                    if node_field is None:
+                    reduced_field = self.reducedNodeFields.get(field_name)
+                    if reduced_field is None:
                         continue
-                    if "U" not in node_field:
-                        node_field.createFieldValueEntry("U")
-                        node_field["U"][:] = 0.0
 
-                    for i, node in enumerate(node_field.nodes):
-                        fv = node.fields.get(field_name)
-                        if fv is not None and fv in field_var_map:
-                            dof_indices = field_var_map[fv]
-                            node_field["U"][i] += dU_np[dof_indices]
+                    persistent_field = model.nodeFields.get(field_name)
+                    if persistent_field is None:
+                        continue
+                    if "U" not in persistent_field:
+                        persistent_field.createFieldValueEntry("U")
+
+                    theDofManager.writeDofVectorToNodeField(dU_np, reduced_field, "dU")
+                    persistent_field.addEntriesFromOther(reduced_field, {"dU": "U"})
 
                 for body in model.rigidBodies.values():
                     body.updateKinematics(timeStep)
@@ -654,6 +657,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         activeNodesPersistent, _, reducedNodeFields, reducedNodeSets = self._assembleActiveDomain(list(), model)
 
         self.reducedNodeSets = {ns.name: ns for ns in reducedNodeSets.values()}
+        self.reducedNodeFields = reducedNodeFields
 
         theDofManager = self._createDofManager(
             nodeFields=list(reducedNodeFields.values()),
