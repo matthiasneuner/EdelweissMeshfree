@@ -208,9 +208,7 @@ def run_sim(full: bool = False):
     fieldOutputController.addPerParticleFieldOutput(
         "vertex displacements", theModel.particleSets["block_all"], "vertex displacements", reshape_to_dimensions=3
     )
-    fieldOutputController.addPerNodeFieldOutput(
-        "rigid_displacement", theModel.nodeFields["displacement"].subset(rigid_body), "U"
-    )
+    fieldOutputController.addRigidBodyFieldOutput("rigid_displacement", rigid_body, "displacement")
     fieldOutputController.initializeJob()
 
     ensightOutput = EnsightOutputManager("ensight", theModel, fieldOutputController, theJournal, None)
