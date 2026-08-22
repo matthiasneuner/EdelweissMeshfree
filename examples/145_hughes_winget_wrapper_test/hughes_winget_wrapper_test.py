@@ -1,0 +1,291 @@
+# -*- coding: utf-8 -*-
+#  ---------------------------------------------------------------------
+#
+#  _____    _      _              _
+# | ____|__| | ___| |_      _____(_)___ ___
+# |  _| / _` |/ _ \ \ \ /\ / / _ \ / __/ __|
+# | |__| (_| |  __/ |\ V  V /  __/ \__ \__ \
+# |_____\__,_|\___|_| \_/\_/_\___|_|___/___/
+# |  \/  | ___  ___| |__  / _|_ __ ___  ___
+# | |\/| |/ _ \/ __| '_ \| |_| '__/ _ \/ _ \
+# | |  | |  __/\__ \ | | |  _| | |  __/  __/
+# |_|  |_|\___||___/_| |_|_| |_|  \___|\___|
+#
+#
+#  Unit of Strength of Materials and Structural Analysis
+#  University of Innsbruck,
+#
+#  Research Group for Computational Mechanics of Materials
+#  Institute of Structural Engineering, BOKU University, Vienna
+#
+#  2023 - today
+#
+#  Matthias Neuner |  matthias.neuner@boku.ac.at
+#  Thomas Mader    |  thomas.mader@bokut.ac.at
+#
+#  This file is part of EdelweissMeshfree.
+#
+#  This library is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU Lesser General Public
+#  License as published by the Free Software Foundation; either
+#  version 2.1 of the License, or (at your option) any later version.
+#
+#  The full text of the license can be found in the file LICENSE.md at
+#  the top level directory of EdelweissMeshfree.
+#  ---------------------------------------------------------------------
+
+"""Drive a small-strain Marmot material inside a finite-strain meshfree particle.
+
+``VonMises`` implements ``MarmotMaterialHypoElastic`` and can therefore not be assigned to a
+``Displacement/PlaneStrain/Point`` particle, which expects a ``MarmotMaterialFiniteStrain``.
+``VONMISES/HUGHES-WINGET`` is the co-rotational Hughes-Winget wrapper around it, bridging exactly
+that gap. The test also exercises the ``characteristic element length`` particle property.
+"""
+
+import argparse
+
+import edelweissfe.utils.performancetiming as performancetiming
+import numpy as np
+import pytest
+from edelweissfe.config.linsolve import getLinSolverByName
+from edelweissfe.journal.journal import Journal
+from edelweissfe.timesteppers.adaptivetimestepper import AdaptiveTimeStepper
+from edelweissfe.utils.exceptions import StepFailed
+
+from edelweissmeshfree.constraints.particlepenaltyweakdirichtlet import (
+    ParticlePenaltyWeakDirichlet,
+)
+from edelweissmeshfree.fieldoutput.fieldoutput import MPMFieldOutputController
+from edelweissmeshfree.generators.rectangularkernelfunctiongridgenerator import (
+    generateRectangularKernelFunctionGrid,
+)
+from edelweissmeshfree.generators.rectangularparticlegridgenerator import (
+    generateRectangularParticleGrid,
+)
+from edelweissmeshfree.meshfree.approximations.marmot.marmotmeshfreeapproximation import (
+    MarmotMeshfreeApproximationWrapper,
+)
+from edelweissmeshfree.meshfree.kernelfunctions.marmot.marmotmeshfreekernelfunction import (
+    MarmotMeshfreeKernelFunctionWrapper,
+)
+from edelweissmeshfree.meshfree.particlekerneldomain import ParticleKernelDomain
+from edelweissmeshfree.models.mpmmodel import MPMModel
+from edelweissmeshfree.outputmanagers.ensight import (
+    OutputManager as EnsightOutputManager,
+)
+from edelweissmeshfree.particlemanagers.kdbinorganizedparticlemanager import (
+    KDBinOrganizedParticleManager,
+)
+from edelweissmeshfree.particles.marmot.marmotparticlewrapper import (
+    MarmotParticleWrapper,
+)
+from edelweissmeshfree.solvers.nqs import NonlinearQuasistaticSolver
+
+
+def run_sim():
+    dimension = 2
+
+    # set nump linewidth to 200:
+    np.set_printoptions(linewidth=200)
+    # set 2 digits after comma:
+    np.set_printoptions(precision=2)
+    # and let's print all the array:
+    np.set_printoptions(threshold=np.inf)
+
+    theJournal = Journal()
+
+    theModel = MPMModel(dimension)
+
+    x0 = -1
+    y0 = -1
+    height = 2
+    length = 8
+    nX = 40
+    nY = 10
+    supportRadius = 0.4
+
+    def theMeshfreeKernelFunctionFactory(node):
+        return MarmotMeshfreeKernelFunctionWrapper(node, "BSplineBoxed", supportRadius=supportRadius, continuityOrder=2)
+
+    theModel = generateRectangularKernelFunctionGrid(
+        theModel, theJournal, theMeshfreeKernelFunctionFactory, x0=x0, y0=y0, h=height, l=length, nX=nX, nY=nY
+    )
+
+    # let's define the type of approximation: We would like to have a reproducing kernel approximation of completeness order 1
+    theApproximation = MarmotMeshfreeApproximationWrapper("ReproducingKernel", dimension, completenessOrder=1)
+
+    # E, nu, yield stress, linear hardening, delta yield stress, delta, density
+    theMaterial = {
+        "material": "VonMises/Hughes-Winget",
+        "properties": np.array([200.0, 0.3, 5.0, 10.0, 0.0, 1.0, 1e-9]),
+    }
+
+    def TheParticleFactory(number, coordinates, volume):
+        return MarmotParticleWrapper(
+            "Displacement/PlaneStrain/Point",
+            number,
+            coordinates,
+            volume,
+            theApproximation,
+            theMaterial,
+        )
+
+    theModel = generateRectangularParticleGrid(
+        theModel, theJournal, TheParticleFactory, x0=x0, y0=y0, h=height, l=length, nX=nX, nY=nY
+    )
+
+    # Particles carry no mesh, so a regularisation length cannot be derived from geometry: assign one
+    # explicitly. This is the "characteristic element length" particle property.
+    for particle in theModel.particles.values():
+        particle.setProperty("characteristic element length", particle.getVolumeUndeformed() ** (1.0 / dimension))
+
+    # let's create the particle kernel domain
+    theParticleKernelDomain = ParticleKernelDomain(
+        list(theModel.particles.values()), list(theModel.meshfreeKernelFunctions.values())
+    )
+
+    # for Semi-Lagrangian particle methods, we assoicate a particle with a kernel function.
+    theParticleManager = KDBinOrganizedParticleManager(
+        theParticleKernelDomain, dimension, theJournal, bondParticlesToKernelFunctions=True
+    )
+
+    # let's print some details
+    print(theParticleManager)
+
+    # We now create a bundled model.
+    # We need this model to create the dof manager
+    theModel.particleKernelDomains["my_all_with_all"] = theParticleKernelDomain
+
+    theModel.prepareYourself(theJournal)
+    theJournal.printPrettyTable(theModel.makePrettyTableSummary(), "summary")
+
+    fieldOutputController = MPMFieldOutputController(theModel, theJournal)
+
+    fieldOutputController.addPerParticleFieldOutput(
+        "displacement",
+        theModel.particleSets["all"],
+        "displacement",
+    )
+    fieldOutputController.addPerParticleFieldOutput(
+        "deformation gradient",
+        theModel.particleSets["all"],
+        "deformation gradient",
+    )
+
+    fieldOutputController.initializeJob()
+
+    ensightOutput = EnsightOutputManager("ensight", theModel, fieldOutputController, theJournal, None)
+    ensightOutput.createPerNodeOutput(fieldOutputController.fieldOutputs["displacement"])
+    ensightOutput.createPerElementOutput(fieldOutputController.fieldOutputs["deformation gradient"])
+    ensightOutput.initializeJob()
+
+    dirichletLeft = ParticlePenaltyWeakDirichlet(
+        "left", theModel, theModel.particleSets["rectangular_grid_left"], "displacement", {0: 0.0, 1: 0.0}, 1e6
+    )
+    dirichletRight = ParticlePenaltyWeakDirichlet(
+        "right", theModel, theModel.particleSets["rectangular_grid_right"], "displacement", {0: 0, 1: 1.0}, 1e6
+    )
+
+    adaptiveTimeStepper = AdaptiveTimeStepper(0.0, 1.0, 1e-1, 1e-1, 1e-1, 1000, theJournal)
+
+    nonlinearSolver = NonlinearQuasistaticSolver(theJournal)
+
+    iterationOptions = dict()
+
+    iterationOptions["max. iterations"] = 15
+    iterationOptions["critical iterations"] = 3
+    iterationOptions["allowed residual growths"] = 3
+
+    linearSolver = getLinSolverByName("pardiso", {})
+
+    try:
+        nonlinearSolver.solveStep(
+            adaptiveTimeStepper,
+            linearSolver,
+            theModel,
+            fieldOutputController,
+            outputManagers=[ensightOutput],
+            particleManagers=[theParticleManager],
+            constraints=[dirichletLeft, dirichletRight],
+            userIterationOptions=iterationOptions,
+        )
+
+    except StepFailed as e:
+        theJournal.message(f"Step failed: {str(e)}", "error")
+        raise
+
+    finally:
+        fieldOutputController.finalizeJob()
+        ensightOutput.finalizeJob()
+
+        prettytable = performancetiming.makePrettyTable()
+        prettytable.min_table_width = theJournal.linewidth
+        theJournal.printPrettyTable(prettytable, "Summary")
+
+    return theModel, fieldOutputController
+
+
+@pytest.fixture(autouse=True)
+def change_test_dir(request, monkeypatch):
+    """No matter where pytest is ran, we set the working dir
+    to this testscript's parent directory"""
+
+    monkeypatch.chdir(request.fspath.dirname)
+
+
+def test_characteristic_element_length_is_a_particle_property():
+    """The wrapper needs an explicitly assigned length; the particle must expose a way to supply one."""
+
+    from edelweissmeshfree.particles.marmot.marmotparticlewrapper import (
+        MarmotParticleWrapper as _P,
+    )
+
+    approximation = MarmotMeshfreeApproximationWrapper("ReproducingKernel", 2, completenessOrder=1)
+    particle = _P(
+        "Displacement/PlaneStrain/Point",
+        1,
+        np.array([[0.0, 0.0]]),
+        1.0,
+        approximation,
+        {"material": "VonMises/Hughes-Winget", "properties": np.array([200.0, 0.3, 5.0, 10.0, 0.0, 1.0, 1e-9])},
+    )
+
+    # NOTE: propertyNames is annotated list[str] but yields the raw byte strings coming from C++.
+    assert b"characteristic element length" in particle.propertyNames
+
+    # Assigning it must reach the material point without raising ...
+    particle.setProperty("characteristic element length", 0.25)
+
+    # ... while a typo must still be rejected rather than silently ignored.
+    with pytest.raises(Exception):
+        particle.setProperty("characteristic elemnt length", 0.25)
+
+
+def test_sim(assert_gold):
+
+    # disable plots and suppress warnings
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    theModel, fieldOutputController = run_sim()
+
+    res = fieldOutputController.fieldOutputs["displacement"].getLastResult().flatten()
+    gold = np.loadtxt("gold.csv")
+
+    assert_gold(res, gold)
+
+
+if __name__ == "__main__":
+    mpmModel, fieldOutputController = run_sim()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--create-gold", dest="create_gold", action="store_true", help="create the gold file.")
+    args = parser.parse_args()
+
+    if args.create_gold:
+        res = fieldOutputController.fieldOutputs["displacement"].getLastResult().flatten()
+        np.savetxt("gold.csv", res)
