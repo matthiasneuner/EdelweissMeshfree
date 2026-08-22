@@ -166,11 +166,11 @@ cdef extern from "Marmot/MarmotParticle.h" namespace "Marmot::Meshfree":
 
         void vci_assignTestFunctionCorrectionTerms(const double* eta_AjC_RowMajor)
 
-        void setProperties( const double* properties, int nProperties )
+        void setProperties( const double* properties, int nProperties ) except +
 
-        void setProperty( const string& propertyName, const double* property )
+        void setProperty( const string& propertyName, const double* property ) except +
 
-        void setInitialCondition( const string& stateName, const double* stateValue )
+        void setInitialCondition( const string& stateName, const double* stateValue ) except +
 
         vector[ string ] getPropertyNames() const
 
