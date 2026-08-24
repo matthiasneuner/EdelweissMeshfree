@@ -49,7 +49,6 @@ from edelweissfe.timesteppers.timestep import TimeStep
 from edelweissfe.utils.exceptions import ReachedMinIncrementSize, StepFailed
 from edelweissfe.utils.fieldoutput import FieldOutputController
 
-from edelweissmeshfree.fields.nodefield import MPMNodeField
 from edelweissmeshfree.models.mpmmodel import MPMModel
 from edelweissmeshfree.mpmmanagers.base.mpmmanagerbase import MPMManagerBase
 from edelweissmeshfree.numerics.dofmanager import MPMDofManager
@@ -182,7 +181,7 @@ class BaseNonlinearSolver:
 
         for dirichlet in dirichlets:
             dirichletNodes = reducedNodeSets[dirichlet.nSet]
-            R[self._findDirichletIndices(theDofManager, dirichlet, dirichletNodes)] = dirichlet.getDelta(
+            R[self._findDirichletIndices(theDofManager, dirichlet, dirichletNodes)] = dirichlet.getPrescribedIncrement(
                 timeStep, dirichletNodes
             ).flatten()
 
@@ -275,44 +274,7 @@ class BaseNonlinearSolver:
                 - the list of NodeFields on the active Nodes.
                 - the list of reduced NodeSets on the active Nodes.
         """
-        # TODO: This method should be part of Model, in the spirit of 'getReducedModel()' or similar
-
-        activeNodesWithPersistentFieldValues = set(
-            n for element in model.elements.values() for n in element.nodes
-        ) | set(n for element in model.cellElements.values() for n in element.nodes)
-
-        activeNodesWithVolatileFieldValues = set(n for cell in activeCells for n in cell.nodes)
-
-        activeNodesWithVolatileFieldValues |= set(
-            kf.node for particle in model.particles.values() for kf in particle.kernelFunctions
-        )
-
-        activeNodes = activeNodesWithVolatileFieldValues | activeNodesWithPersistentFieldValues
-
-        activeNodes = NodeSet("activeNodes", activeNodes)
-        activeNodesWithPersistentFieldValues = NodeSet(
-            "activeNodesWithPersistentFieldvalues", activeNodesWithPersistentFieldValues
-        )
-        activeNodesWithVolatileFieldValues = NodeSet(
-            "activeNodesWithVolatileFieldValues", activeNodesWithVolatileFieldValues
-        )
-
-        reducedNodeFields = {
-            nodeField.name: MPMNodeField(nodeField.name, nodeField.dimension, activeNodes)
-            for nodeField in model.nodeFields.values()
-        }
-
-        reducedNodeSets = {
-            nodeSet: NodeSet(nodeSet.name, set(activeNodes).intersection(nodeSet))
-            for nodeSet in model.nodeSets.values()
-        }
-
-        return (
-            activeNodesWithPersistentFieldValues,
-            activeNodesWithVolatileFieldValues,
-            reducedNodeFields,
-            reducedNodeSets,
-        )
+        return model.assembleActiveDomain(activeCells)
 
     @performancetiming.timeit("preparation material points")
     def _prepareMaterialPoints(self, materialPoints: list, time: float, dT: float):
