@@ -135,7 +135,19 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             )
 
         particles = list(model.particles.values())
+        elements = list(model.elements.values())
         constraints = list(model.constraints.values())
+
+        if elements and reinitializationOfVelocitiesFromMomentum:
+            # Particles carry their own momentum and can report it; finite elements do not -- their
+            # nodes hold their velocity in the global vector, exactly as in EdelweissFE's explicit
+            # dynamic solver. Reinitialising every increment from a momentum the elements cannot
+            # contribute to would silently pin the element nodes' velocity to zero and freeze the
+            # finite element bodies solid, so refuse instead of quietly integrating nonsense.
+            raise ValueError(
+                "reinitializationOfVelocitiesFromMomentum is only applicable to pure particle "
+                "models, but this model has finite elements."
+            )
 
         discretizationIsInitialized = False
 
@@ -161,14 +173,26 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
                     activeConstraints = [c for c in constraints if c.active]
 
-                    theDofManager = self._instanceDofManager(model, activeConstraints, particles)
+                    theDofManager, activeNodesPersistent, reducedNodeFields = self._instanceDofManager(
+                        model, activeConstraints, particles, elements
+                    )
 
-                    M, dU_np, P_Int, P_Ext, v_np_one_half, momentum = self.getDiscretization(
+                    M, dU_np, P_Int, P_Ext, v_np_one_half, momentum, U_np = self.getDiscretization(
                         theDofManager, model, mpmManagers, constraints
                     )
                     self.updateSystem(particles, timeStep.totalTime, dT, dU_np)
                     self.computeSystem(
-                        particles, activeConstraints, particleDistributedLoads, P_Int, P_Ext, M, momentum, timeStep
+                        elements,
+                        particles,
+                        activeConstraints,
+                        particleDistributedLoads,
+                        U_np,
+                        dU_np,
+                        P_Int,
+                        P_Ext,
+                        M,
+                        momentum,
+                        timeStep,
                     )
                     M_inv = np.reciprocal(M)
 
@@ -176,6 +200,11 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                         v_np_one_half[:] = self._restoreHalfStepVelocity(len(v_np_one_half))
                     else:
                         v_np_one_half[:] = momentum * M_inv
+
+                        if elements:
+                            self._seedElementNodeVelocity(
+                                theDofManager, reducedNodeFields, model, elements, v_np_one_half
+                            )
 
                     discretizationIsInitialized = True
 
@@ -196,6 +225,10 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                             dU_np[indices] = v_np_one_half[indices] * dT  # (U_np - U_n) = v_(n+1/2) * dT
                         elif order == 1:  # Forward Euler
                             dU_np[indices] += a_n[indices] * dT
+
+                    # Particles absorb the increment into their own state and never need a total,
+                    # but finite elements are evaluated in the current configuration and do.
+                    np.add(U_np, dU_np, out=U_np)
 
                 self._applyStepActionsAtIncrementStart(model, timeStep, dirichlets + bodyLoads)
 
@@ -229,12 +262,38 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                             activeConstraints,
                             self._getParticlesWithChangedKernelFunctions(particleManagers),
                         )
-                    else:
-                        theDofManager = self._instanceDofManager(model, activeConstraints, particles)
 
-                    M, dU_np, P_Int, P_Ext, _, momentum = self.getDiscretization(
-                        theDofManager, model, mpmManagers, constraints
-                    )
+                        M, dU_np, P_Int, P_Ext, _, momentum, _ = self.getDiscretization(
+                            theDofManager, model, mpmManagers, constraints
+                        )
+                    else:
+                        # A full rebuild renumbers the dofs, so anything indexed by the old
+                        # numbering has to be carried across by node identity: the accumulated total
+                        # displacement, which *is* the finite elements' deformation, and the
+                        # half-step velocity, which is the integration state.
+                        #
+                        # Only done when there are elements. A pure particle model keeps the
+                        # behaviour it had before -- the half-step velocity array carried over
+                        # untouched -- because changing that would move every existing result.
+                        savedNodalState = (
+                            self._persistNodalState(theDofManager, reducedNodeFields, U_np, v_np_one_half)
+                            if elements
+                            else None
+                        )
+
+                        theDofManager, activeNodesPersistent, reducedNodeFields = self._instanceDofManager(
+                            model, activeConstraints, particles, elements
+                        )
+
+                        M, dU_np, P_Int, P_Ext, vFresh, momentum, U_np = self.getDiscretization(
+                            theDofManager, model, mpmManagers, constraints
+                        )
+
+                        if elements:
+                            v_np_one_half = vFresh
+                            self._restoreNodalState(
+                                theDofManager, reducedNodeFields, savedNodalState, U_np, v_np_one_half
+                            )
                 #    +-------------------------------+
                 # +--| new discretization at t_(n+1) |
                 # |  +-------------------------------+
@@ -244,7 +303,17 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
                 P_Int[:] = P_Ext[:] = M[:] = momentum[:] = 0.0
                 self.computeSystem(
-                    particles, activeConstraints, particleDistributedLoads, P_Int, P_Ext, M, momentum, timeStep
+                    elements,
+                    particles,
+                    activeConstraints,
+                    particleDistributedLoads,
+                    U_np,
+                    dU_np,
+                    P_Int,
+                    P_Ext,
+                    M,
+                    momentum,
+                    timeStep,
                 )
                 # prevent division close to zero:
                 M[M < 1e-12] = 1e-12
@@ -253,6 +322,13 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                 # For RKPM omitting this step and simple taking v_np_one_half from previous step leads to way less dissipative results
                 if reinitializationOfVelocitiesFromMomentum:
                     v_np_one_half = momentum * M_inv
+
+                if elements:
+                    # Particles carry their own state and report it themselves, so a pure particle
+                    # model needs nothing here and does not pay for this. The finite elements' state
+                    # lives only in the solver's vectors, though, so without this there is no way to
+                    # see or post-process the element bodies at all.
+                    self._publishNodalState(theDofManager, reducedNodeFields, model, U_np, v_np_one_half)
 
                 self._finalizeIncrementOutput(fieldOutputController, outputManagers)
 
@@ -400,8 +476,9 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             The global velocity vector at time n+1/2.
         Mv
             The global momentum vector.
-        reducedNodeSets
-            The reduced node sets for the active domain.
+        U
+            The global total solution vector. Finite elements are evaluated in the current
+            configuration and need it; particles keep their own and do not.
         """
 
         M = theDofManager.constructDofVector()
@@ -410,15 +487,19 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         P_Ext = theDofManager.constructDofVector()
         v_np_one_half = np.zeros_like(dU)
         Mv = theDofManager.constructDofVector()
+        U = theDofManager.constructDofVector()
 
-        return M, dU, P_Int, P_Ext, v_np_one_half, Mv
+        return M, dU, P_Int, P_Ext, v_np_one_half, Mv, U
 
     @performancetiming.timeit("compute system")
     def computeSystem(
         self,
+        elements: list,
         particles: list,
         constraints: list,
         particleDistributedLoads: list[ParticleDistributedLoad],
+        U_np: DofVector,
+        dU: DofVector,
         P_Int: DofVector,
         P_Ext: DofVector,
         M: DofVector,
@@ -429,12 +510,18 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
 
         Parameters
         ----------
+        elements
+            The list of finite elements to be evaluated.
         particles
             The list of particles to be evaluated.
         constraints
             The list of constraints to be applied.
         particleDistributedLoads
             The list of particle distributed loads to be applied.
+        U_np
+            The global total solution vector.
+        dU
+            The global solution increment vector.
         P_Int
             The global internal flux vector.
         P_Ext
@@ -453,6 +540,8 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             M,
             Mv,
         )
+
+        self._computeElementsExplicit(elements, U_np, dU, P_Int, M, timeStep)
 
         self._computeParticleDistributedLoads(particleDistributedLoads, P_Ext, timeStep)
         self._computeConstraints(constraints, P_Ext, timeStep)
@@ -484,6 +573,241 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             totalTime,
             dT,
         )
+
+    @performancetiming.timeit("computation elements")
+    def _computeElementsExplicit(
+        self,
+        elements: list,
+        U_np: DofVector,
+        dU: DofVector,
+        P_Int: DofVector,
+        M: DofVector,
+        timeStep: TimeStep,
+    ):
+        """Evaluate all finite elements: their internal forces and their lumped inertia.
+
+        Unlike the particles, the elements are evaluated in a serial loop. The particle loop is the
+        hot one in a meshfree model, and an element mesh coupled to it is typically the smaller
+        part; parallelising this too is a later step, not a correctness question.
+
+        The inertia is recomputed every increment rather than once per step, because the mass
+        vector it accumulates into is shared with the particles, whose contribution genuinely does
+        change as they move.
+
+        Parameters
+        ----------
+        elements
+            The list of finite elements to be evaluated.
+        U_np
+            The global total solution vector.
+        dU
+            The global solution increment vector.
+        P_Int
+            The global internal flux vector.
+        M
+            The global lumped inertia vector.
+        timeStep
+            The current time increment.
+        """
+        if not elements:
+            return
+
+        time = timeStep.totalTime
+        dT = timeStep.timeIncrement
+
+        for element in elements:
+            PEl = np.zeros(element.nDof)
+            element.computeKernelsExplicit(PEl, U_np[element], dU[element], time, dT)
+            P_Int[element] += PEl
+
+            MEl = np.zeros(element.nDof)
+            element.computeLumpedInertia(MEl)
+            M[element] += MEl
+
+    def _seedElementNodeVelocity(
+        self,
+        theDofManager: DofManager,
+        reducedNodeFields: dict,
+        model: MPMModel,
+        elements: list,
+        v: DofVector,
+    ):
+        """Seed the element nodes' initial half-step velocity from the ``V`` entry of the model's
+        node fields.
+
+        Particles report their own momentum, and the initial half-step velocity of the grid nodes is
+        projected from it -- which is why a particle body that arrives moving only has to be given a
+        velocity particle by particle. Finite elements cannot do that: their velocity lives in the
+        solver's global vector and nowhere else, so without this an element body always starts from
+        rest and a finite element projectile is impossible to state.
+
+        The ``V`` entry of the node fields is where that velocity is read from, mirroring
+        :meth:`_publishNodalState`, which writes the same entry back every increment. Only element
+        nodes are seeded: the grid nodes' velocity has just been projected from the particles'
+        momentum, and overwriting it with a field entry the particles never wrote to would zero it.
+
+        Parameters
+        ----------
+        theDofManager
+            The DofManager the vectors are numbered by.
+        reducedNodeFields
+            The node fields on the currently active nodes.
+        model
+            The MPM model instance.
+        elements
+            The finite elements whose nodes are to be seeded.
+        v
+            The global half-step velocity vector to seed.
+        """
+        elementNodes = set()
+        for element in elements:
+            elementNodes.update(element.nodes)
+
+        if not elementNodes:
+            return
+
+        for field in reducedNodeFields.values():
+            modelField = model.nodeFields[field.name]
+            if "V" not in modelField:
+                continue
+
+            indices = theDofManager.idcsOfNodeFieldsInDofVector[field.name]
+            velocityOfNode = modelField["V"]
+            indicesOfNodesInModelField = modelField._indicesOfNodesInArray
+
+            vValues = np.asarray(v)[indices].reshape((-1, field.dimension)).copy()
+
+            for i, node in enumerate(field.nodes):
+                if node not in elementNodes:
+                    continue
+                indexInModelField = indicesOfNodesInModelField.get(node)
+                if indexInModelField is not None:
+                    vValues[i] = velocityOfNode[indexInModelField]
+
+            v[indices] = vValues.flatten()
+
+    def _persistNodalState(
+        self,
+        theDofManager: DofManager,
+        reducedNodeFields: dict,
+        U: DofVector,
+        v: DofVector,
+    ) -> dict:
+        """Capture the nodal state keyed by node identity, so it survives a renumbering of the
+        degrees of freedom.
+
+        Deliberately not routed through the model's node fields: writing there would zero the
+        entries of every currently inactive node, and would make this solver's internal bookkeeping
+        visible to everything else that reads those fields.
+
+        Parameters
+        ----------
+        theDofManager
+            The DofManager the vectors are currently numbered by.
+        reducedNodeFields
+            The node fields on the currently active nodes.
+        U
+            The global total solution vector.
+        v
+            The global half-step velocity vector.
+
+        Returns
+        -------
+        dict
+            The saved state, mapping a (field name, node) pair to that node's total displacement and
+            half-step velocity.
+        """
+        savedState = dict()
+
+        for field in reducedNodeFields.values():
+            indices = theDofManager.idcsOfNodeFieldsInDofVector[field.name]
+            uValues = np.asarray(U)[indices].reshape((-1, field.dimension))
+            vValues = np.asarray(v)[indices].reshape((-1, field.dimension))
+
+            for i, node in enumerate(field.nodes):
+                savedState[(field.name, node)] = (uValues[i].copy(), vValues[i].copy())
+
+        return savedState
+
+    def _publishNodalState(
+        self,
+        theDofManager: DofManager,
+        reducedNodeFields: dict,
+        model: MPMModel,
+        U: DofVector,
+        v: DofVector,
+    ):
+        """Write the nodal total displacement and half-step velocity into the model's node fields,
+        so that field output and restarts can see the finite element bodies' state.
+
+        Parameters
+        ----------
+        theDofManager
+            The DofManager the vectors are numbered by.
+        reducedNodeFields
+            The node fields on the currently active nodes.
+        model
+            The MPM model instance.
+        U
+            The global total solution vector.
+        v
+            The global half-step velocity vector.
+        """
+        for field in reducedNodeFields.values():
+            theDofManager.writeDofVectorToNodeField(U, field, "U")
+            theDofManager.writeDofVectorToNodeField(v, field, "V")
+
+            modelField = model.nodeFields[field.name]
+            for entry in ("U", "V"):
+                if entry not in modelField:
+                    modelField.createFieldValueEntry(entry)
+
+            modelField.copyEntriesFromOther(field, ["U", "V"])
+
+    def _restoreNodalState(
+        self,
+        theDofManager: DofManager,
+        reducedNodeFields: dict,
+        savedState: dict,
+        U: DofVector,
+        v: DofVector,
+    ):
+        """Write the saved nodal state back into freshly numbered vectors.
+
+        A node that has only just become active has nothing saved and starts from zero, which is the
+        right answer for a grid node the particles have only now reached. The state that must not be
+        dropped -- the element nodes' accumulated displacement -- never is, because element nodes are
+        active in every increment.
+
+        Parameters
+        ----------
+        theDofManager
+            The DofManager the vectors are numbered by.
+        reducedNodeFields
+            The node fields on the currently active nodes.
+        savedState
+            The state previously returned by :meth:`_persistNodalState`.
+        U
+            The global total solution vector to be filled.
+        v
+            The global half-step velocity vector to be filled.
+        """
+        if not savedState:
+            return
+
+        for field in reducedNodeFields.values():
+            indices = theDofManager.idcsOfNodeFieldsInDofVector[field.name]
+
+            uValues = np.zeros((len(field.nodes), field.dimension))
+            vValues = np.zeros_like(uValues)
+
+            for i, node in enumerate(field.nodes):
+                saved = savedState.get((field.name, node))
+                if saved is not None:
+                    uValues[i], vValues[i] = saved
+
+            U[indices] = uValues.flatten()
+            v[indices] = vValues.flatten()
 
     @performancetiming.timeit("computation constraints")
     def _computeConstraints(self, constraints: list, P: DofVector, timeStep: TimeStep):
@@ -577,9 +901,9 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         return particlesWithChangedKernelFunctions
 
     @performancetiming.timeit("instance dof structure")
-    def _instanceDofManager(self, model: MPMModel, constraints: list, particles: list) -> DofManager:
+    def _instanceDofManager(self, model: MPMModel, constraints: list, particles: list, elements: list = []) -> tuple:
         """
-        Update the DOF manager with the current active constraints and particles.
+        Update the DOF manager with the current active constraints, particles and elements.
 
         Parameters
         ----------
@@ -589,11 +913,16 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             The list of constraints to be evaluated.
         particles
             The list of particles to be evaluated.
+        elements
+            The list of finite elements to be evaluated.
 
         Returns
         -------
-        DofManager
-            The updated DOF manager instance.
+        tuple
+            The tuple containing:
+                - The updated DOF manager instance.
+                - The NodeSet of active nodes with persistent field values, i.e. the element nodes.
+                - The dict of node fields on the active nodes.
         """
 
         activeNodesPersistent, _, reducedNodeFields, reducedNodeSets = self._assembleActiveDomain(list(), model)
@@ -601,7 +930,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         theDofManager = self._createDofManager(
             reducedNodeFields.values(),
             list(),
-            list(),
+            elements,
             constraints,
             list(),
             list(),
@@ -611,7 +940,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             determiningIndexToHostObjectMappping=False,
         )
 
-        return theDofManager
+        return theDofManager, activeNodesPersistent, reducedNodeFields
 
     @performancetiming.timeit("compute distributed loads")
     def _computeParticleDistributedLoads(
