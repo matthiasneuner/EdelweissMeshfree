@@ -54,6 +54,15 @@ from edelweissmeshfree.meshfree.kernelfunctions.marmot.marmotmeshfreekernelfunct
 )
 
 
+# Point Marmot's warning channel at stdout, once, when this extension is imported. MarmotJournal
+# writes into a null streambuf unless a consumer calls setMSGOutputDirection, and nothing in this
+# package ever did -- so every warning Marmot raised on a meshfree run was discarded silently. That
+# is how a stalling run could look like it had nothing to say for itself. EdelweissFE's
+# marmotelement.pyx does the same thing for its own path; the singleton is process-wide, so whichever
+# extension loads first wires it for both.
+MarmotJournal.setMSGOutputDirection(cout)
+
+
 @cython.final # no subclassing -> cpdef with nogil possible
 cdef class MarmotParticleWrapper:
     """This class as a wrapper for MarmotParticles.

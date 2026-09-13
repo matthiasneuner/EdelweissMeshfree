@@ -52,6 +52,24 @@ from edelweissmeshfree.meshfree.kernelfunctions.marmot.marmotmeshfreekernelfunct
 )
 
 
+# Marmot's warning channel. MarmotJournal is built on a NULL streambuf, so everything it emits is
+# discarded until a consumer points it somewhere -- and nothing in EdelweissMeshfree ever did, so
+# every warning Marmot raised on a meshfree run was thrown away before it could be printed.
+# See the setMSGOutputDirection call in marmotparticlewrapper.pyx.
+cdef extern from "<ostream>" namespace "std":
+    cdef cppclass ostream
+
+
+cdef extern from "<iostream>" namespace "std":
+    ostream cout
+
+
+cdef extern from "Marmot/MarmotJournal.h":
+    cdef cppclass MarmotJournal:
+        @staticmethod
+        void setMSGOutputDirection(ostream&)
+
+
 cdef extern from "Marmot/MarmotUtils.h":
     cdef struct StateView:
         double *stateLocation
