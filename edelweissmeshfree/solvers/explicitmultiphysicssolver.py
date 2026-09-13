@@ -68,6 +68,7 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
         restartBaseName: str = "restart",
         shallowUpdateOfDofManager: bool = True,
         reinitializationOfVelocitiesFromMomentum: bool = False,
+        prescribedVelocities: list = [],
     ) -> tuple[bool, MPMModel]:
         """
         Solve a time step for the given model.
@@ -106,6 +107,15 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
             The number of restart files to store in the restart history manager.
         restartBaseName
             The base name for the restart files. The restart history manager will append an index to this base name to generate the full file name for each restart file.
+        prescribedVelocities
+            Kinematic velocity boundary conditions, applied by overwriting the half-step velocity and the
+            solution increment of the degrees of freedom they constrain. Unlike a penalty constraint they
+            introduce no stiffness and therefore do not shrink the stable increment, which is what makes
+            a prescribed motion usable at all in an explicit meshfree analysis -- see
+            ParticlePrescribedVelocityExplicit. An empty list leaves the solver's behaviour unchanged.
+            Once per finalized increment, each one also has its reaction recorded via
+            ``recordReaction``, retrievable afterwards from the driver script as its
+            ``reactionHistory``.
         shallowUpdateOfDofManager
             Whether to perform a shallow update of the DOF manager in case of connectivity changes. If true, the DOF manager will be updated with the new active constraints and particles without reconstructing the entire DOF structure. If false, the DOF manager will be fully reconstructed based on the new active domain. Note that the shallow update is only applicable for pure "classical" particle simulations where nodes are always associated with the same fields, and the number of nodes does not change.
         reinitializationOfVelocitiesFromMomentum
@@ -197,6 +207,12 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                         elif order == 1:  # Forward Euler
                             dU_np[indices] += a_n[indices] * dT
 
+                    # Kinematic boundary conditions overwrite what the update just computed, so that the
+                    # prescribed motion is followed exactly rather than approached through a force. They
+                    # must act before updateSystem() advances the particles by dU_np.
+                    for prescribedVelocity in prescribedVelocities:
+                        prescribedVelocity.applyKinematics(theDofManager, v_np_one_half, dU_np, dT, timeStep)
+
                 self._applyStepActionsAtIncrementStart(model, timeStep, dirichlets + bodyLoads)
 
                 # the solution increment to t_np is formulated in terms of the old discretization at t_n
@@ -253,6 +269,21 @@ class ExplicitMultiphysicsSolver(BaseNonlinearSolver):
                 # For RKPM omitting this step and simple taking v_np_one_half from previous step leads to way less dissipative results
                 if reinitializationOfVelocitiesFromMomentum:
                     v_np_one_half = momentum * M_inv
+
+                    # Rebuilding the velocity from the momentum discards the prescribed values, since the
+                    # momentum carries no knowledge of them. Restore them.
+                    for prescribedVelocity in prescribedVelocities:
+                        prescribedVelocity.applyKinematics(
+                            theDofManager, v_np_one_half, dU_np, timeStep.timeIncrement, timeStep
+                        )
+
+                # Sampled here, once per finalized increment: P_Int above reflects the state that was
+                # just accepted, and this is the same point at which field output is sampled, so a
+                # driver script recovers a load-displacement curve for a kinematically driven boundary
+                # condition by reading prescribedVelocity.reactionHistory after the step, index-aligned
+                # with its own per-increment output. An empty prescribedVelocities list costs nothing.
+                for prescribedVelocity in prescribedVelocities:
+                    prescribedVelocity.recordReaction(theDofManager, P_Int)
 
                 self._finalizeIncrementOutput(fieldOutputController, outputManagers)
 
