@@ -183,6 +183,7 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
         bondParticlesToKernelFunctions: bool = False,
         randomlyShiftPartliceShapeFunctions: Union[bool, float] = False,
         neighbourListSkinFraction: float = 0.0,
+        rebuildShapeFunctionsEveryIncrement: bool = True,
     ):
 
         self._meshfreeKernelFunctions = particleKernelDomain.meshfreeKernelFunctions
@@ -206,6 +207,17 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
         self._allKernelsHaveBoxSupport = all(k.hasBoxSupport for k in self._meshfreeKernelFunctions)
 
         self._neighbourListSkin = self._computeNeighbourListSkin(neighbourListSkinFraction)
+
+        # See updateConnectivity() for what this trades off, and read that note before switching it
+        # on: with bondParticlesToKernelFunctions=True a search is NEVER due -- the kernels travel
+        # with their particles, so the motion criterion never trips -- and this flag therefore means
+        # "never rebuild the shape functions after the initial build", for the whole run. The skin is
+        # inert in that configuration: measured on the gradient-enhanced bar of example 208, skins of
+        # 0.005 and 0.05 give bit-identical answers, so the error is NOT bounded by the skin.
+        # Measured cost of the freeze there: 0.26 % on the reaction while the response is elastic,
+        # 3.4 % on the reaction and 14 % on min(omega) once damage localises, against a 29x cheaper
+        # connectivity phase (12.85 s -> 0.44 s).
+        self._rebuildShapeFunctionsEveryIncrement = rebuildShapeFunctionsEveryIncrement
 
         # Positions as of the last search, against which motion is measured. Empty means no search
         # has happened yet, so the next call has to be one.
@@ -294,6 +306,12 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
         exactly zero at the particle, and the reconstruction discards anything that does, so the shape
         functions are the same ones a full search would have produced.
 
+        With ``rebuildShapeFunctionsEveryIncrement=False``, an increment that needs neither is skipped
+        entirely: the reproducing-kernel reconstruction (the expensive part of a connectivity update,
+        typically comparable to or larger than the search itself) is only paid for on the increments
+        that already pay for a search. This is the one part of the skin mechanism that is *not* exact --
+        see the note in the body below -- so it is opt-in and defaults to off.
+
         Returns
         -------
         bool
@@ -304,7 +322,14 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
             self._moveKernelFunctionsToTheirParticles()
 
         if not self._aSearchIsDue():
-            self._rebuildShapeFunctionsWithUnchangedNeighbours()
+            if self._rebuildShapeFunctionsEveryIncrement:
+                self._rebuildShapeFunctionsWithUnchangedNeighbours()
+            # else: the shape functions already on the particles are still valid to reuse. Motion
+            # since the last rebuild is bounded by the neighbour list skin -- the same bound that
+            # keeps the neighbour lists themselves exact -- so the values reused here are stale by at
+            # most that much, not unbounded. Unlike the neighbour list reuse this is *not* exact: a
+            # reproducing-kernel shape function is a continuous function of position, so freezing it
+            # for one or more increments introduces a small, bounded geometric error rather than none.
             self._particlesWithChangedKernelFunctions = []
             return False
 
