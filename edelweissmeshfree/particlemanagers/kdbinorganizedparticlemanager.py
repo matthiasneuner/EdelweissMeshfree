@@ -212,7 +212,7 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
         # on: with bondParticlesToKernelFunctions=True a search is NEVER due -- the kernels travel
         # with their particles, so the motion criterion never trips -- and this flag therefore means
         # "never rebuild the shape functions after the initial build", for the whole run. The skin is
-        # inert in that configuration: measured on the gradient-enhanced bar of example 208, skins of
+        # inert in that configuration: measured on a gradient-enhanced (GCDP) bar pulled explicitly, skins of
         # 0.005 and 0.05 give bit-identical answers, so the error is NOT bounded by the skin.
         # Measured cost of the freeze there: 0.26 % on the reaction while the response is elastic,
         # 3.4 % on the reaction and 14 % on min(omega) once damage localises, against a 29x cheaper

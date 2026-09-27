@@ -31,8 +31,8 @@ running the same impact with the skin off and on and requiring the two displacem
 examples/141_marmot_sqcni_nsni_finite_strain_plasticity_explicit_test
 (Displacement/SQCNIxNSNI/PlaneStrain/Quad) both confirm bit-identical results with the skin on or
 off. But the same check against a **gradient-enhanced** (two-field: displacement plus nonlocal damage)
-particle -- GradientEnhancedFiniteStrainSQCNIxNSNI, as used by
-examples/208_gradient_enhanced_explicit_dirichlet_test -- does *not* reproduce: turning on any
+particle -- GradientEnhancedFiniteStrainSQCNIxNSNI, in
+a quasi-static explicit pull of a 100 mm x 200 mm gradient-enhanced (GCDP) bar driven by a prescribed velocity -- does *not* reproduce: turning on any
 nonzero skin (0.005 or 0.05 tried, both giving the identical answer to each other) changes the final
 reaction by 3.4% and the minimum damage variable omega by 14%, relative to searching every increment.
 The size of the discrepancy does not shrink with the skin fraction, which rules out a simple accumulated
@@ -72,7 +72,7 @@ Going further: also skipping the rebuild
 The skin above only ever skips the *search*. Even on an increment where no search is due, the shape
 functions are still rebuilt from the unchanged neighbour list every single time, because a
 reproducing-kernel shape function is a function of the current position and the particles have moved.
-Measured on a quasi-static explicit pull test (examples/208_gradient_enhanced_explicit_dirichlet_test,
+Measured on a quasi-static explicit pull test (the same GCDP bar,
 single-threaded), the two halves of the connectivity update are comparably expensive -- roughly 48% search,
 49% reconstruction, with the remainder in rebuilding the bins and moving bonded kernel functions -- so
 skipping only the search leaves close to half of the phase's cost on the table.
@@ -114,7 +114,7 @@ Legacy implementation
    kernels travel with their particles and a search is therefore **never** due, which makes this flag
    mean *never rebuild after the initial build*.
 
-   Measured on the gradient-enhanced bar of examples/208_gradient_enhanced_explicit_dirichlet_test:
+   Measured on the same GCDP bar:
    skins of 0.005 and 0.05 give **bit-identical** results, confirming the skin is inert here; the
    reaction moves 0.26 % while the response is elastic and 3.4 % once damage localises, with
    min(omega) moving 14 %; the connectivity phase drops 29x (12.85 s to 0.44 s).

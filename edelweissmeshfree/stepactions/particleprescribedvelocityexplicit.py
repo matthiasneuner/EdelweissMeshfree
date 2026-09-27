@@ -12,7 +12,7 @@ class ParticlePrescribedVelocityExplicit:
     The counterpart of
     :class:`~edelweissmeshfree.constraints.explicit.particlepenaltyweakdirichletexplicit.ParticlePenaltyWeakDirichletExplicit`,
     and the reason it exists: **a penalty cannot drive an explicit meshfree analysis by a prescribed
-    motion.** Measured on the tension bar of example 208, with the penalty the only stable stiffness
+    motion.** Measured on an explicit tension bar of gradient-enhanced GCDP, the only stable penalty stiffness
     (1e4) followed the prescribed displacement to 5.3 %, while the stiffness that would follow it to a
     few percent (>= 1e5) diverges. The explicit critical increment is computed from the material wave
     speed and takes no account of constraint stiffness, whereas a penalty's own limit falls off as
