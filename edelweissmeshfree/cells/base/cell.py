@@ -53,33 +53,35 @@ from edelweissmeshfree.materialpoints.base.mp import MaterialPointBase
 
 
 class CellBase(ABC, VIJEntityBase):
+    """MPM cells in EdelweissMPM should be derived from this
+    base class in order to follow the general interface.
+
+    EdelweissMPM expects the layout of the internal and external load vectors, P, PExt, (and the stiffness)
+    to be of the form
+
+    .. code-block:: console
+
+        [ node 1 - dofs field 1,
+          node 1 - dofs field 2,
+          node 1 - ... ,
+          node 1 - dofs field n,
+          node 2 - dofs field 1,
+          ... ,
+          node N - dofs field n].
+
+    Parameters
+    ----------
+    cellType
+        A string identifying the requested element formulation.
+    cellNumber
+        A unique integer label used for all kinds of purposes.
+    nodes
+        The list of Nodes assigned to this cell.
+    """
+
     @abstractmethod
     def __init__(self, cellType: str, cellNumber: int, nodes: list[Node]):
-        """MPM cells in EdelweissMPM should be derived from this
-        base class in order to follow the general interface.
-
-        EdelweissMPM expects the layout of the internal and external load vectors, P, PExt, (and the stiffness)
-        to be of the form
-
-        .. code-block:: console
-
-            [ node 1 - dofs field 1,
-              node 1 - dofs field 2,
-              node 1 - ... ,
-              node 1 - dofs field n,
-              node 2 - dofs field 1,
-              ... ,
-              node N - dofs field n].
-
-        Parameters
-        ----------
-        cellType
-            A string identifying the requested element formulation.
-        cellNumber
-            A unique integer label used for all kinds of purposes.
-        nodes
-            The list of Nodes assigned to this cell.
-        """
+        pass
 
     @property
     @abstractmethod
