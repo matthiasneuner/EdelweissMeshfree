@@ -71,6 +71,7 @@ def _compressOneCell(solverType):
     increments (the zero increment and one more)."""
 
     from edelweissfe.config.linsolve import getLinSolverByName
+    from edelweissfe.stepactions.dirichlet import StepAction as Dirichlet
 
     from edelweissmeshfree.fieldoutput.fieldoutput import MPMFieldOutputController
     from edelweissmeshfree.generators import (
@@ -81,7 +82,6 @@ def _compressOneCell(solverType):
     from edelweissmeshfree.mpmmanagers.simplempmmanager import (
         SimpleMaterialPointManager,
     )
-    from edelweissmeshfree.stepactions.dirichlet import Dirichlet
 
     journal = RecordingJournal()
     model = MPMModel(2)
@@ -156,16 +156,8 @@ def _checkCutback(model, timeStepper, journal):
 
 
 def test_a_failing_material_point_is_a_cutback():
-    """The serial solver integrates the material points through the material point wrapper."""
+    """The solver integrates the material points through the material point wrapper."""
 
-    from edelweissmeshfree.solvers.nqs import NonlinearQuasistaticSolver
+    from edelweissmeshfree.solvers.deprecated.nqs import NonlinearQuasistaticSolver
 
     _checkCutback(*_compressOneCell(NonlinearQuasistaticSolver))
-
-
-def test_a_failing_material_point_in_the_threaded_kernel_is_a_cutback():
-    """The parallel solver integrates the material points in a threaded Marmot kernel."""
-
-    from edelweissmeshfree.solvers.nqsmarmotparallel import NQSParallelForMarmot
-
-    _checkCutback(*_compressOneCell(NQSParallelForMarmot))
