@@ -390,8 +390,11 @@ cdef class MarmotParticleWrapper:
         return self._stateVars
 
     def readRestartData(self, data):
+        """Restore the state :meth:`getRestartData` returned. The geometry of the underlying MarmotParticle follows
+        from its state, and is brought to it as at the start of an increment (see :meth:`prepareYourself`)."""
+
         np.asarray(self._stateVars)[:] = data[:]
-        self._initializeStateVarsTemp()
+        self.prepareYourself(0.0, 0.0)
 
     def getVIJContributionSize(self) -> int:
         """Return the number of entries this entity contributes to the VIJ (COO) system matrix."""
