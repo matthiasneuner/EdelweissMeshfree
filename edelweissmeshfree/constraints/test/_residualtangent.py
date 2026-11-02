@@ -76,16 +76,54 @@ def residualContributionAndTangent(
     return P, K
 
 
-def finiteDifferenceTangent(constraint, dU: np.ndarray, timeStep, h: float = 1e-7) -> np.ndarray:
+def stateInAnIncrement(constraint, incrementsAndMultipliers: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """The solution ``U_np`` and its increment ``dU`` of a constraint, in an increment that starts from a converged
+    state ``U_n`` that is not zero, so that a constraint that reads the wrong one of the two fails.
+
+    The nodal values of the particles, cells and finite element nodes enter a constraint as increments, the multipliers
+    as totals. ``U_n`` is random: at the nodes, the increments are the given ones, and ``U_np = U_n + dU`` holds
+    whatever ``U_n`` there; the multipliers of ``U_np`` are the given totals, and ``dU`` holds their change since
+    ``U_n``.
+
+    Parameters
+    ----------
+    constraint
+        The constraint; its multipliers, if any, are its last entries.
+    incrementsAndMultipliers
+        The increments at the nodes, followed by the totals of the multipliers.
+    seed
+        The seed of the random ``U_n``.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        ``U_np`` and ``dU``.
+    """
+
+    U_n = np.random.default_rng(seed).standard_normal(constraint.nDof)
+    nMultipliers = constraint.getNumberOfAdditionalNeededScalarVariables()
+    nNodalValues = constraint.nDof - nMultipliers
+
+    dU = incrementsAndMultipliers.copy()
+    dU[nNodalValues:] -= U_n[nNodalValues:]
+    U_np = U_n + dU
+    U_np[nNodalValues:] = incrementsAndMultipliers[nNodalValues:]
+
+    return U_np, dU
+
+
+def finiteDifferenceTangent(constraint, U_np: np.ndarray, dU: np.ndarray, timeStep, h: float = 1e-7) -> np.ndarray:
     """The derivative of a constraint's residual contribution by central differences.
 
-    The nodes of particles and cells carry no total solution: at the start of an increment the configuration is the
-    current one, so ``U = dU``, and ``U`` and ``dU`` are perturbed together.
+    The solver iterates on the increment, and ``U_np = U_n + dU``: perturbing ``dU`` perturbs ``U_np`` equally, so
+    both are perturbed together, whichever of the two the constraint reads.
 
     Parameters
     ----------
     constraint
         The constraint.
+    U_np
+        The local solution, at which to differentiate.
     dU
         The local solution increment, at which to differentiate.
     timeStep
@@ -103,10 +141,48 @@ def finiteDifferenceTangent(constraint, dU: np.ndarray, timeStep, h: float = 1e-
     for i in range(dU.size):
         perturbation = np.zeros(dU.size)
         perturbation[i] = h
-        forward = residualContributionAndTangent(constraint, dU + perturbation, dU + perturbation, timeStep)[0]
-        backward = residualContributionAndTangent(constraint, dU - perturbation, dU - perturbation, timeStep)[0]
+        forward = residualContributionAndTangent(constraint, U_np + perturbation, dU + perturbation, timeStep)[0]
+        backward = residualContributionAndTangent(constraint, U_np - perturbation, dU - perturbation, timeStep)[0]
         columns.append((forward - backward) / (2.0 * h))
     return np.column_stack(columns)
+
+
+def assertIncrementsAtNodesAndTotalMultipliersAreRead(constraint, U_np: np.ndarray, dU: np.ndarray, timeStep):
+    """Assert that a constraint reads the nodal values as increments, from ``dU``, and the multipliers as totals,
+    from ``U_np``: its residual contribution and tangent do not change with the nodal entries of ``U_np`` or the
+    multiplier entries of ``dU``, and the residual contribution changes with the multipliers of ``U_np``.
+
+    Parameters
+    ----------
+    constraint
+        The constraint; its multipliers, if any, are its last entries.
+    U_np
+        The local solution.
+    dU
+        The local solution increment.
+    timeStep
+        The time step handed to the constraint.
+    """
+
+    nMultipliers = constraint.getNumberOfAdditionalNeededScalarVariables()
+    nNodalValues = constraint.nDof - nMultipliers
+    P, K = residualContributionAndTangent(constraint, U_np, dU, timeStep)
+
+    otherTotalsAtNodes = U_np.copy()
+    otherTotalsAtNodes[:nNodalValues] += 1.0
+    otherChangesOfMultipliers = dU.copy()
+    otherChangesOfMultipliers[nNodalValues:] += 1.0
+    P_other, K_other = residualContributionAndTangent(
+        constraint, otherTotalsAtNodes, otherChangesOfMultipliers, timeStep
+    )
+    np.testing.assert_array_equal(P_other, P)
+    np.testing.assert_array_equal(K_other, K)
+
+    if nMultipliers:
+        otherMultipliers = U_np.copy()
+        otherMultipliers[nNodalValues:] *= 2.0
+        P_other, _ = residualContributionAndTangent(constraint, otherMultipliers, dU, timeStep)
+        assert not np.allclose(P_other, P), "the multipliers of U_np must enter the residual contribution"
 
 
 def interpolationVector(nodes: list, coordinates: np.ndarray) -> np.ndarray:
