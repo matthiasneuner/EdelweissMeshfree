@@ -37,8 +37,13 @@
 the symmetry plane by a support
 (:class:`~edelweissmeshfree.constraints.particlepenaltyweakdirichtlet.ParticlePenaltyWeakDirichlet` holding the
 horizontal displacement of the vertices on the plane at zero). The half projectile reproduces the right half of the
-whole one, up to the approximation at the plane, where its kernel functions end; without the support, it spreads about
-its own center instead.
+whole one; without the support, it spreads about its own center instead.
+
+The support has to be stiff against the material it holds: a penalty of the wall's (1e5 per point, about twice the
+stiffness of a particle) lets the plane give way and spring back, and the half projectile is then 10 % off the whole
+one, whatever the particle size, since the stiffness of a particle in plane strain does not change with its size. With
+1e6, below the stable limit of the time increment, the deviation is a few % and shrinks with the particle size: the
+largest deviation is 0.28, 0.090 and 0.033 for particles of 10, 5 and 2.5 mm (of a largest displacement of 6.5 to 8.2).
 """
 
 import argparse
@@ -81,6 +86,8 @@ from edelweissmeshfree.particles.marmot.marmotparticlewrapper import (
 )
 
 PENALTY = 1e5
+#: The penalty of the support on the symmetry plane, see the module documentation.
+SUPPORT_PENALTY = 1e6
 PARTICLE_SIZE = 10.0
 HALF_WIDTH = 50.0
 HEIGHT = 100.0
@@ -151,7 +158,7 @@ def run_sim(model: str) -> np.ndarray:
     if model == "half":
         # the vertices 0 and 3 of a particle in the left column are on the symmetry plane x = 0
         theModel.constraints["symmetry"] = ParticlePenaltyWeakDirichlet(
-            "symmetry", theModel, list(theModel.particleSets["projectile_left"]), "displacement", {0: 0.0}, PENALTY,
+            "symmetry", theModel, list(theModel.particleSets["projectile_left"]), "displacement", {0: 0.0}, SUPPORT_PENALTY,
             constrain=[0, 3],
         )  # fmt: skip
 
@@ -225,11 +232,10 @@ def test_sim(assert_gold):
     largestWithoutSupport, meanHorizontalWithoutSupport, _ = deviations(uHalfWithoutSupport, uWhole)
 
     # Without the support, the half projectile spreads about its own center, not away from the plane: its mean
-    # horizontal displacement is zero. The support restores it. What remains is the approximation at the plane, where
-    # the kernel functions of the half projectile end: the deviation does not shrink with a tenfold penalty.
-    assert meanHorizontal < 0.3 * meanHorizontalWithoutSupport
-    assert largest < 0.3 * largestWithoutSupport
-    assert meanVertical < 0.03 * abs(uWhole[:, 1].mean())
+    # horizontal displacement is zero. The support restores it.
+    assert meanHorizontal < 0.05 * meanHorizontalWithoutSupport
+    assert largest < 0.15 * largestWithoutSupport
+    assert meanVertical < 0.005 * abs(uWhole[:, 1].mean())
 
     assert_gold(uHalf.flatten(), np.loadtxt("gold.csv"), atol=1e-12)
 
