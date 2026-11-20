@@ -110,11 +110,8 @@ MATERIAL = {
 
 #: The impactor: a block of 20 x 20 mm, its bottom 0.05 mm above the target, falling at 10 m/s: it touches after 5 µs.
 IMPACTOR_SIZE, STANDOFF, IMPACT_VELOCITY = 20.0, 0.05, -10e3
-#: The Courant number of NED. The critical time increment of the quadratic UL elements is an l / c estimate, which does
-#: not account for their polynomial order (see Marmot's DisplacementFiniteStrainULElement): for an undistorted CPE8UL,
-#: it is 2.46 times the stable increment 2 / omega_max of the element, so NED's default of 0.8 diverges, and so does
-#: 0.5. 0.3 is below 1 / 2.46; the element bound is an upper bound of the mesh's highest frequency.
-COURANT_NUMBER = 0.3
+#: The Courant number of NED, its default.
+COURANT_NUMBER = NED.SolverSpecificOptions["courant-number"]
 #: The size of the particles and of the finite elements of the impactor and the target.
 ENTITY_SIZE = 2.5
 #: The interface stiffness per unit area of the finite element contact; the particle contact takes it per contact point,
