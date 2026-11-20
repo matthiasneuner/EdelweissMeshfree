@@ -108,8 +108,13 @@ MATERIAL = {
     ),
 }
 
-#: The impactor: a block of 20 x 20 mm, its bottom 0.5 mm above the target, falling at 10 m/s.
-IMPACTOR_SIZE, STANDOFF, IMPACT_VELOCITY = 20.0, 0.5, -10e3
+#: The impactor: a block of 20 x 20 mm, its bottom 0.05 mm above the target, falling at 10 m/s: it touches after 5 µs.
+IMPACTOR_SIZE, STANDOFF, IMPACT_VELOCITY = 20.0, 0.05, -10e3
+#: The Courant number of NED. The critical time increment of the quadratic UL elements is an l / c estimate, which does
+#: not account for their polynomial order (see Marmot's DisplacementFiniteStrainULElement): for an undistorted CPE8UL,
+#: it is 2.46 times the stable increment 2 / omega_max of the element, so NED's default of 0.8 diverges, and so does
+#: 0.5. 0.3 is below 1 / 2.46; the element bound is an upper bound of the mesh's highest frequency.
+COURANT_NUMBER = 0.3
 #: The size of the particles and of the finite elements of the impactor and the target.
 ENTITY_SIZE = 2.5
 #: The interface stiffness per unit area of the finite element contact; the particle contact takes it per contact point,
@@ -222,7 +227,9 @@ def addParticleBlock(model: MPMModel, journal: Journal, name: str, x0: float, y0
     )
 
 
-def run_sim(impactor: str, target: str, courantNumber: float = 0.5, duration: float = 30e-6) -> ContactHistory:
+def run_sim(
+    impactor: str, target: str, courantNumber: float = COURANT_NUMBER, duration: float = 40e-6
+) -> ContactHistory:
     """Let an impactor fall onto a target.
 
     Parameters
@@ -332,7 +339,10 @@ def run_sim(impactor: str, target: str, courantNumber: float = 0.5, duration: fl
         fieldOutputController,
         journal,
         jobInfo,
-        NED(jobInfo, journal, **{"courant-number": courantNumber, "contact-update-frequency": 1}),
+        # the contact history is recorded in every increment
+        NED(
+            jobInfo, journal, **{"courant-number": courantNumber, "contact-update-frequency": 1, "output-frequency": 1}
+        ),
         [history],
         stepActions,
         stepLength=duration,
@@ -390,8 +400,8 @@ def test_an_impactor_of_particles_rebounds_as_one_of_finite_elements():
 
 @waitsForParticlesInNED
 def test_halving_the_time_increment_changes_the_penetration_history_little():
-    coarse = run_sim("particles", "supported block", courantNumber=0.5)
-    fine = run_sim("particles", "supported block", courantNumber=0.25)
+    coarse = run_sim("particles", "supported block", courantNumber=COURANT_NUMBER)
+    fine = run_sim("particles", "supported block", courantNumber=0.5 * COURANT_NUMBER)
 
     penetrationOfFineAtCoarseTimes = np.interp(coarse.times, fine.times, fine.penetrations)
     deepest = max(coarse.penetrations)
@@ -403,7 +413,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("impactor", choices=["particles", "finite elements"])
     parser.add_argument("target", choices=["free plate", "supported block"])
-    parser.add_argument("--courant-number", type=float, default=0.5)
+    parser.add_argument("--courant-number", type=float, default=COURANT_NUMBER)
     args = parser.parse_args()
 
     history = run_sim(args.impactor, args.target, args.courant_number)
