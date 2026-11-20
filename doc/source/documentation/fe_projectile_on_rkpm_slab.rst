@@ -110,15 +110,14 @@ vertices of a hexahedral particle on its faces are ``[0, 3, 4, 7]`` (x min), ``[
         "support_x", model, list(model.particleSets["slab_right"]), "displacement", {0: 0.0, 2: 0.0},
         supportPenalty, constrain=[1, 2, 5, 6])
 
-.. warning::
-
-    A vertex moves with the particle's own deformation (its centre displacement and its smoothed deformation
-    gradient), but the constraint distributes the force at the vertex with the shape functions there. The two differ
-    for any nodal pattern that is not linear, so the support's stiffness is unsymmetric and does work over a closed
-    cycle: once the concrete next to it has lost its stiffness, it can feed a growing mode. The production slab of this
-    model blew up this way, whatever the time increment; supports held at the particle centres did not. Until the
-    constraint moves its points with the shape functions it distributes the force with, check the kinetic energy
-    against the initial one (see below).
+A vertex moves with the particle's own deformation, its centre displacement and its smoothed deformation gradient:
+by :math:`\sum_I G_I \Delta\boldsymbol{U}_I` in an increment, with the particle's interpolation vector of an attached
+point :math:`G_I` (:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getAttachedPointInterpolationVector`),
+not with the shape functions at the vertex. The support (and the contact below) distributes its force with the same
+:math:`G_I`, the transpose of the vertex motion: its penalty stiffness is symmetric and it does no work over a closed
+cycle of motion (``edelweissmeshfree/constraints/test/vertexpenaltywork_test.py``). Distributing the force with the
+shape functions at the vertex is not conservative: the production slab of this model blew up that way next to the
+symmetry planes, once the concrete there had been crushed, whatever the time increment.
 
 Constrain the vertices, not the centres: the centres lie half a particle off the plane and move with Poisson's
 effect. The support penalty must be stiff against the material next to it, or the plane gives way and springs back
@@ -218,3 +217,17 @@ connectivity changes, was most of the cost of an increment while it evaluated ev
 now bound the row sums of their absolute stiffness node by node, at a small share of an increment. And the
 response depends on the particle size more than on the time increment, the penalty or the symmetry: with GM7's internal
 length well below the particle size, the softening concrete is resolved by the particles, not by the nonlocal strain.
+
+What the run shows
+------------------
+
+The quarter model of the 600 mm slab (3087 particles) ran until the nose reached the stop depth of 40 mm at
+333 us, with the time increment set by the projectile's elements throughout. The checks held over the whole run: the
+kinetic energy never exceeded the initial one, action and reaction cancelled to round-off, the projectile's momentum
+followed the contact impulse to round-off, and no point was found inside. The projectile slowed from 300 to 148 m/s in
+the first 100 us and to 57 m/s at the stop; the contact force averaged over 5 us peaked at 3.3 MN after 20 to 25 us
+(the first touch, a few points at full speed, is a spike set by the penalty). At the stop, about two fifths of the
+particles had cracked, through the whole thickness and out to the supported edges, and the most crushed ones were under
+the nose and in the rear layer. The velocity history agrees with the August prototype of this model (a CDP slab, a
+wider span), which reached 43.4 mm at 398 us; a bonded interface between projectile and slab stops at 34.4 mm. The
+result depends on the particle size (see above), which the regularization of GM7 does not remove at this size.
