@@ -11,7 +11,7 @@ The model:
 - **Projectile**: a steel cube of 50 mm, ``C3D20RUL`` (quadratic updated-Lagrangian hexahedra), ``VONMISES/HUGHES-WINGET``,
   300 m/s towards the slab, free.
 - **Slab**: 1000 x 1000 x 100 mm, ``GradientEnhanced6FiniteStrainSQCNIxNSNI/3D/Hexa`` particles of GM7 at finite
-  strains (``GM7/COROTATIONAL``), held at its edges.
+  strains (``GM7/COROTATIONAL``; or of GCDP, see "The slab"), held at its edges.
 - **Contact**: the vertices of the slab particles near the impact against the faceted surface of the cube,
   :class:`~edelweissmeshfree.constraints.explicit.particlepenaltyfacetcontactexplicit.ParticlePenaltyFacetContactExplicit`.
 - A **quarter model**, with the symmetry planes x = 0 and y = 0.
@@ -88,6 +88,25 @@ nonlocal viscosity :math:`\eta` and the micro-inertia of the nonlocal strain; wi
 :math:`\eta^2/4` the nonlocal field is a critically damped wave, integrated by central differences on the particles'
 own lumped inertia and damping. :math:`\eta` is the time the nonlocal strain lags behind the local one: it has to be
 short against the rise of the contact force.
+
+The slab can also be of GCDP, the gradient-enhanced concrete damaged plasticity model. GCDP is a private Marmot module,
+not part of the public Marmot; where it is built, it enters as ``GCDP/HUGHES-WINGET`` in
+``GradientEnhancedFiniteStrainSQCNIxNSNI/3D/Hexa`` particles, with one nonlocal variable, its nonlocal damage driving
+variable (field ``nonlocal damage``):
+
+.. code-block:: python
+
+    material = {"material": "GCDP/HUGHES-WINGET", "properties": gcdp}  # ..., density, viscosity eta, micro-inertia
+
+    def particleFactory(number, vertexCoordinates, volume):
+        return MarmotParticleWrapper("GradientEnhancedFiniteStrainSQCNIxNSNI/3D/Hexa", number, vertexCoordinates,
+                                     0.0, approximation, material)
+
+The Hughes-Winget wrapper rotates the stress of the last increment and hands it to the material together with the
+strain increment of the mid-step configuration. That is objective only for a material that is incremental in the
+stress, and GCDP is: it forms its trial stress from the stress it is handed, and its other internal variables are
+scalars (GM7, which rebuilds its stress from total strains, needs the frame of the polar rotation instead). The last
+two properties are again the nonlocal viscosity and the micro-inertia.
 
 Supports and symmetry planes
 ----------------------------
@@ -232,3 +251,8 @@ particles had cracked, through the whole thickness and out to the supported edge
 the nose and in the rear layer. The velocity history agrees with the August prototype of this model (a CDP slab, a
 wider span), which reached 43.4 mm at 398 us; a bonded interface between projectile and slab stops at 34.4 mm. The
 result depends on the particle size (see above), which the regularization of GM7 does not remove at this size.
+
+The same run with a GCDP slab, its parameters the ones the GM7 set was matched to, resisted like the GM7 slab for the
+first 100 us and then gave way: the concrete under the nose was crushed to GCDP's largest damage, which degrades the
+compressive stiffness as well, the contact force fell to a fraction of the GM7 slab's, and the projectile reached the
+stop depth at 286 us still at 94 m/s.
