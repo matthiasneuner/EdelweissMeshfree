@@ -363,10 +363,6 @@ def change_test_dir(request, monkeypatch):
     monkeypatch.chdir(request.fspath.dirname)
 
 
-waitsForParticlesInNED = pytest.mark.skip(reason="waits for NED to integrate finite elements and particles together")
-
-
-@waitsForParticlesInNED
 def test_the_contact_gives_equal_and_opposite_impulses_to_a_free_floating_plate():
     history = run_sim("particles", "free plate")
 
@@ -378,10 +374,16 @@ def test_the_contact_gives_equal_and_opposite_impulses_to_a_free_floating_plate(
     impulses = np.cumsum(forces * np.diff(history.times, prepend=0.0)[:, None, None], axis=0)
     np.testing.assert_allclose(impulses[:, 0] + impulses[:, 1], 0.0, atol=1e-12 * np.abs(impulses).max())
 
+    # the impulse the particle block received is the change of its momentum (it has no other load)
+    massOfTheImpactor = DENSITY * IMPACTOR_SIZE**2
+    changeOfMomentum = massOfTheImpactor * (history.velocities[-1] - IMPACT_VELOCITY)
+    assert impulses[-1, 0, 1] == pytest.approx(changeOfMomentum, rel=1e-3)
 
-@waitsForParticlesInNED
-def test_an_impactor_of_particles_rebounds_as_one_of_finite_elements():
+
+def test_an_impactor_of_particles_rebounds_as_one_of_finite_elements(assert_gold):
     ofParticles = run_sim("particles", "supported block")
+    assert_gold(np.array(ofParticles.forces)[:, 0, 1], np.loadtxt("gold.csv"), atol=1e-6)
+
     ofFiniteElements = run_sim("finite elements", "supported block")
 
     peakForceOfParticles = np.abs(np.array(ofParticles.forces)[:, 0, 1]).max()
@@ -395,15 +397,23 @@ def test_an_impactor_of_particles_rebounds_as_one_of_finite_elements():
     assert reboundOfParticles <= abs(IMPACT_VELOCITY)
 
 
-@waitsForParticlesInNED
-def test_halving_the_time_increment_changes_the_penetration_history_little():
+def test_halving_the_time_increment_changes_the_impact_little():
+    """The response of the bodies converges with the time increment: the velocity of the impactor, the impulse of the
+    contact and the deepest penetration. The penetration of the deepest point increment by increment does not, by
+    the same measure: single contact points ring at the frequency of their penalty spring, and that history converges
+    only at first order in the time increment."""
+
     coarse = run_sim("particles", "supported block", courantNumber=COURANT_NUMBER)
     fine = run_sim("particles", "supported block", courantNumber=0.5 * COURANT_NUMBER)
 
-    penetrationOfFineAtCoarseTimes = np.interp(coarse.times, fine.times, fine.penetrations)
-    deepest = max(coarse.penetrations)
-    assert deepest > 0.0
-    np.testing.assert_allclose(coarse.penetrations, penetrationOfFineAtCoarseTimes, atol=0.02 * deepest)
+    velocityOfFineAtCoarseTimes = np.interp(coarse.times, fine.times, fine.velocities)
+    np.testing.assert_allclose(coarse.velocities, velocityOfFineAtCoarseTimes, atol=0.02 * abs(IMPACT_VELOCITY))
+
+    def impulse(history):
+        return np.trapezoid(np.array(history.forces)[:, 0, 1], history.times)
+
+    assert impulse(coarse) == pytest.approx(impulse(fine), rel=0.005)
+    assert max(coarse.penetrations) == pytest.approx(max(fine.penetrations), rel=0.03)
 
 
 if __name__ == "__main__":
@@ -411,6 +421,9 @@ if __name__ == "__main__":
     parser.add_argument("impactor", choices=["particles", "finite elements"])
     parser.add_argument("target", choices=["free plate", "supported block"])
     parser.add_argument("--courant-number", type=float, default=COURANT_NUMBER)
+    parser.add_argument(
+        "--create-gold", action="store_true", help="write the contact force history of this run to gold.csv."
+    )
     args = parser.parse_args()
 
     history = run_sim(args.impactor, args.target, args.courant_number)
@@ -422,3 +435,6 @@ if __name__ == "__main__":
             max(history.penetrations), history.velocities[-1]
         )
     )
+
+    if args.create_gold:
+        np.savetxt("gold.csv", forces[:, 0, 1])
