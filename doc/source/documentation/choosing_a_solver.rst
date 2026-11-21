@@ -295,6 +295,14 @@ material does not depend on the time increment, but for a rate-dependent one, e.
 the stiffness relaxed over that time, softer than the response within an explicit increment, and the bound may be too
 large; take a smaller ``courant-number`` there.
 
+A penalty constraint on the particles -- a support (``ParticlePenaltyWeakDirichlet``), a contact with points on their
+faces -- adds its stiffness to the frequencies of the nodes it couples. The constraints bound the row sums of their own
+stiffness, scaled by the lumped mass, in every increment, and these are added to the particles' row sums inside the
+field matrix (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`): where they
+raise no diagonal entry of it, the particles' estimate stands; a support or a contact far stiffer than the particles
+sets the critical time step. The margin policy of the particles watches the estimate with the constraints of the
+current increment as well (theory page on the critical time step of EdelweissFE, "Penalty constraints").
+
 What to know
 ************
 

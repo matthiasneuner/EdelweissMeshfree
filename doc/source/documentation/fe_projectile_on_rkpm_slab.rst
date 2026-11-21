@@ -115,9 +115,10 @@ facet to facet; a point found inside without having been seen approaching gets n
 on the particles and the reaction on the projectile's nodes are equal and opposite. See the documentation of the
 constraint for the gap, the pairing and what it reports.
 
-- **The penalty** is a stiffness per unit area, times the area a contact point stands for. It is a stiffness the
-  critical time step does not see: keep :math:`2\sqrt{m/k}`, with :math:`m` the mass a contact point carries and
-  :math:`k` the penalty times its area, well above the time increment.
+- **The penalty** is a stiffness per unit area, times the area a contact point stands for. The critical time step sees
+  it: in every increment, the stiffness of the closed points is added to the frequencies of the nodes they couple, on
+  the particles' side and on the projectile's (EdelweissFE's theory page on the critical time step, "Penalty
+  constraints"). A penalty far stiffer than the concrete costs time increments, not stability.
 - **The search distance** must exceed the distance a point travels towards the surface in one increment; a point in
   contact is never lost to it. A warning in the journal says when points enter deeper than half of it.
 
@@ -136,8 +137,9 @@ it is, unsymmetric: while the concrete under the nose is crushed, GM7's stress d
 the steep compressive boundary, far more strongly than the nonlocal strain depends on the strain, and the bound follows
 the geometric mean of the two couplings, as the eigenvalues do. Here the limit of the particles is that of the nonlocal
 field, set by its micro-inertia, and it stays above the projectile's elements: the elements set the time increment.
-Neither bound sees the penalty stiffness of the contact or of the supports; check them by hand, and check the result by
-halving the time increment.
+The penalty springs of the contact and of the supports add to the frequencies of the nodes they couple, in every
+increment; here they stay below the limits of the parts at those nodes and leave the time increment as it is. Check the
+result by halving the time increment.
 
 Running it
 ----------
