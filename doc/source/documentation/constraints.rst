@@ -71,8 +71,8 @@ with the particle's interpolation vector of an attached point,
 from the center is not :math:`\mathbf{N}`. Such a constraint therefore measures and distributes its force with
 :math:`\mathbf{G}`, the transpose of the point's motion, so that a penalty on the point is conservative. Measuring
 the position but distributing the force with :math:`\mathbf{N}` gives an unsymmetric stiffness that does work over a
-closed cycle of motion; ``edelweissmeshfree/constraints/test/vertexpenaltywork_test.py`` checks that a support and a
-facet contact on the vertices of a real particle do none. The two operations such a constraint needs besides its own
+closed cycle of motion; ``edelweissmeshfree/constraints/test/vertexpenaltywork_test.py`` checks that a support on the
+vertices and a contact on a face of a real particle do none. The two operations such a constraint needs besides its own
 physics -- locating the nodes of its particles in its block, and distributing a force on a point with
 :math:`\mathbf{G}` -- are in :mod:`edelweissmeshfree.constraints.base.pointsofparticles`, which the explicit
 constraints and the support use: a new constraint on points of particles is its physics and a constructor.
@@ -196,14 +196,20 @@ Constraints for explicit analyses
    :members:
    :private-members:
 
-``ParticlePenaltyFacetContactExplicit`` constraint class
-********************************************************
+Contact of particles with finite elements
+-----------------------------------------
 
-Contact between particles and a body of finite elements: the vertices of the particles against the faceted boundary
-of the finite elements, which EdelweissFE's surface element generator creates. The theory is in the class
-documentation; its tests are ``edelweissmeshfree/constraints/test/particlepenaltyfacetcontactexplicit_test.py``
-(pairing, entering, tunnelling, the exchange of momentum) and example 185 (the same result as an analytic wall).
+Particles meet a body of finite elements through EdelweissFE's contact constraint,
+:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`, the same one that couples two bodies of finite
+elements: it is one contact for every kind of contact point (see EdelweissFE's contact theory, *One contact for every
+kind of contact point*). The contact points of particles are quadrature points on faces of particles -- a surface of
+particles, as the generators and the side sets of an Exodus mesh make them, or (particle, face) pairs -- each moving
+with the interpolation vector :math:`\mathbf{G}` of an attached point and standing for its share of the face, so the
+penalty is a stiffness per unit area, as for finite elements. The master is the faceted boundary of the finite
+elements, which EdelweissFE's surface element generator creates. The contact acts in implicit and explicit analyses;
+its tests are ``edelweissmeshfree/constraints/test/particlefacecontact_test.py`` (the force of a pressed face, the
+tangent by central differences, pairing, entering, tunnelling, restart) and examples 185 (the same result as an
+analytic wall), 187 (impact of particles and of finite elements on finite elements) and 191 (:doc:`fe_projectile_on_rkpm_slab`).
 
-.. automodule:: edelweissmeshfree.constraints.explicit.particlepenaltyfacetcontactexplicit
+.. automodule:: edelweissmeshfree.constraints.base.contactpointsonparticlefaces
    :members:
-   :private-members:

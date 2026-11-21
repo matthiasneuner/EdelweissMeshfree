@@ -18,8 +18,9 @@ The model:
   300 m/s towards the slab, free.
 - **Slab**: 100 mm thick, ``GradientEnhanced6FiniteStrainSQCNIxNSNI/3D/Hexa`` particles of GM7 at finite strains
   (``GM7/COROTATIONAL``), held at its edges.
-- **Contact**: the vertices of the slab particles near the impact against the faceted surface of the cube,
-  :class:`~edelweissmeshfree.constraints.explicit.particlepenaltyfacetcontactexplicit.ParticlePenaltyFacetContactExplicit`.
+- **Contact**: quadrature points on the faces of the slab particles near the impact against the faceted surface of
+  the cube, through EdelweissFE's contact constraint (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`)
+  with :class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`.
 - A **quarter model**, with the symmetry planes x = 0 and y = 0.
 
 Units are N, mm, t and s throughout.
@@ -104,15 +105,19 @@ The contact
     :language: python
     :pyobject: addTheContact
 
-The contact points are the vertices of the given particles (only those the projectile can reach: every point is
-searched in every increment); the master is the faceted surface. The constraint pairs a point with a facet while the
-point approaches, pushes it back out through that facet once it has entered, and lets it slide only onto the facets
-next to it; a point found inside without having been seen outside gets no force and is reported. The force on the
-particles and the reaction on the projectile's nodes are equal and opposite. See the class documentation for the
-gap, the pairing and what the constraint reports.
+The contact points are four quadrature points on every face of the given particles (only those the projectile can
+reach: every point within the search distance is searched in every increment), the faces inside the slab included,
+which the projectile meets as it penetrates; the master is the faceted surface. It is the contact constraint that
+couples two bodies of finite elements, with the particles' own contact points: each moves with its particle and
+stands for its share of the face. The constraint pairs a point with a facet while the point approaches, pushes it
+back out once it has entered -- never through a facet that faces against the way it came -- and lets it slide from
+facet to facet; a point found inside without having been seen approaching gets no force and is reported. The force
+on the particles and the reaction on the projectile's nodes are equal and opposite. See the documentation of the
+constraint for the gap, the pairing and what it reports.
 
-- **The penalty** is a force per unit penetration of one contact point. It is a stiffness the critical time step does
-  not see: keep :math:`2\sqrt{m/k}`, with :math:`m` the mass a contact point carries, well above the time increment.
+- **The penalty** is a stiffness per unit area, times the area a contact point stands for. It is a stiffness the
+  critical time step does not see: keep :math:`2\sqrt{m/k}`, with :math:`m` the mass a contact point carries and
+  :math:`k` the penalty times its area, well above the time increment.
 - **The search distance** must exceed the distance a point travels towards the surface in one increment; a point in
   contact is never lost to it. A warning in the journal says when points enter deeper than half of it.
 
@@ -161,7 +166,7 @@ projectile's motion, and check:
   of the velocity: a penalty spring can push the projectile out only with energy the projectile brought in. ``NED``'s
   own energy table says that its balance is not usable in a run without external work and asks to watch the kinetic
   energy directly: this is that check.
-- **Momentum.** ``contactForceOnParticles + contactForceOnMaster`` vanishes to round-off in every increment, and the
+- **Momentum.** ``contactForceOnSlave + contactForceOnMaster`` vanishes to round-off in every increment, and the
   projectile's momentum (its nodal masses times the nodal velocities) changes by the accumulated impulse of
   ``contactForceOnMaster``, the force of an increment times the mean of the increments before and after it (``NED``'s
   leapfrog), along the axis free of supports, to round-off.
@@ -194,7 +199,8 @@ What the run shows
 ------------------
 
 The production run is the quarter of a slab of 600 x 600 x 100 mm in seven layers of particles (3087 particles) and of
-the projectile in 2 x 2 x 4 elements, with the restart output manager and an output manager that stops the step at a
+the projectile in 2 x 2 x 4 elements, made with the contact on the vertices of the particles that the contact points on
+their faces replaced, with the restart output manager and an output manager that stops the step at a
 nose depth of 40 mm. It ran until the nose reached the stop depth of 40 mm at
 333 us, with the time increment set by the projectile's elements throughout. The checks held over the whole run: the
 kinetic energy never exceeded the initial one, action and reaction cancelled to round-off, the projectile's momentum
