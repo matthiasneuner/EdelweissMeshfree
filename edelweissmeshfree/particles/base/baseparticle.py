@@ -424,7 +424,7 @@ class BaseParticle(BaseNodeCouplingEntity):
         """Explicit dynamics: the tangent of the internal force with respect to the degrees of freedom of the kernel
         functions currently assigned, at the current state, which is left unchanged (a zero increment, evaluated on a
         copy of the state). Without inertia. The exact stiffness, e.g. to check the bound of
-        :meth:`computeBoundOfAbsoluteStiffnessTimes` against, which the stable time increment of the particles is
+        :meth:`computeBoundOfAbsoluteStiffnessTimes` against, which the critical time step of the particles is
         bounded with.
 
         The zero increment is taken over a unit time increment, at time zero: the time increment is only positive, as a
@@ -448,9 +448,9 @@ class BaseParticle(BaseNodeCouplingEntity):
         the stiffness at the current state (the tangent of :meth:`computeTangentOfTheCurrentState`, without inertia,
         of a zero increment over a unit time increment, see there) times nonnegative weights, which leaves the state
         unchanged. The stiffness itself is not assembled: the bound
-        costs as much as the nodes, the stiffness as their square. It is what the stable time increment of the
-        particles is bounded with
-        (:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.stableTimeIncrementOfEntitiesWithOwnInertia`).
+        costs as much as the nodes, the stiffness as their square. It is what the critical time step of the particles
+        is estimated with
+        (:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`).
 
         Parameters
         ----------

@@ -151,7 +151,7 @@ The time increment
 ------------------
 
 ``NED`` takes the smaller of the critical time step of the elements (their own eigenvalue bound) and the bound of the
-stable time increment of the particles, bounded from their stiffness without assembling it, and scales it by
+critical time step of the particles, bounded from their stiffness without assembling it, and scales it by
 ``courant-number``.
 The bound of the particles is computed anew whenever a particle reaches other kernel functions (see
 :doc:`choosing_a_solver`, "Explicit dynamics"); the contact pairs points anew in most increments, but that changes no
@@ -213,7 +213,7 @@ a tenfold penalty range by about half a millimetre, the size of the change of th
 about a tenth of the search distance and no point was found inside; the quarter model followed the whole one to a few
 tenths of a millimetre. A run resumed from a checkpoint after an interruption followed the uninterrupted one.
 
-The bound of the particles' stable time increment costs a small share of an increment: the particles bound the row
+The critical time step of the particles costs a small share of an increment: the particles bound the row
 sums of their absolute stiffness node by node, and only when a particle reaches other kernel functions.
 
 One finding matters more than any of these: the response depends on the particle size more than on the time

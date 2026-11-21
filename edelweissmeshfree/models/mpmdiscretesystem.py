@@ -53,7 +53,7 @@ from edelweissmeshfree.numerics.doflocations import MPMDofLocations
 #: node an acceleration of round-off over round-off.
 COEFFICIENT_AT_ROUND_OFF = 1e-12
 
-#: The fraction of the stable time increment of the particles' tangent that the explicit scheme of the particles is
+#: The fraction of the critical time step of the particles' tangent that the explicit scheme of the particles is
 #: stable for. Their NSNI stabilization acts on the increment of the step, not on the total displacement, so the scheme
 #: is not exactly the central difference method with their tangent: measured on 2D and 3D blocks of particles (support
 #: factors 1.6 to 3.4, quadratic and cubic kernels), it was stable up to 0.875 to 0.98 of the tangent's limit.
@@ -298,7 +298,7 @@ class MPMDiscreteSystem(DiscreteSystem):
 
     @property
     def elementsWithNodalInertia(self) -> list:
-        """The finite elements, whose inertia, damping and stable time increment a solver assembles element by
+        """The finite elements, whose inertia, damping and critical time step a solver assembles element by
         element, at the nodes. The cells, the cell elements and the particles contribute nothing there: the particles
         carry the state, and with it the inertia, which they integrate themselves, or which a solver lumps to the nodes
         of their kernel functions (see :meth:`assembleLumpedMassOfEntitiesWithOwnInertia`).
@@ -435,14 +435,15 @@ class MPMDiscreteSystem(DiscreteSystem):
 
         return coefficient
 
-    def stableTimeIncrementOfEntitiesWithOwnInertia(
+    def criticalTimeStepOfEntitiesWithOwnInertia(
         self,
         lumpedMass: DofVector,
         lumpedDamping: DofVector,
         forEachChunk: Callable[[list, Callable], None],
     ) -> float | None:
-        """A bound of the stable time increment of ``NED``'s explicit scheme for the particles, from their stiffness at
-        the current state and the assembled lumped mass and damping. No stiffness is assembled: every particle bounds
+        """An estimate of the critical time step of ``NED``'s explicit scheme for the particles, a lower bound of it, from
+        their stiffness at the current state and the assembled lumped mass and damping; ``NED`` decides when it is taken
+        anew (:class:`~edelweissfe.solvers.base.criticaltimestep.CriticalTimeStepOfEntitiesWithOwnInertia`). No stiffness is assembled: every particle bounds
         the row sums of the absolute value of its own (``computeBoundOfAbsoluteStiffnessTimes``), at a cost
         proportional to its nodes.
 
@@ -466,7 +467,7 @@ class MPMDiscreteSystem(DiscreteSystem):
         nonlocal field depends on the strain with a factor of one, and the micro-inertia of the nonlocal field is far
         below the mass. An eigenvalue :math:`\\lambda` of the coupled system sees the geometric mean of the two coupling
         blocks, the symmetric part of the tangent their arithmetic mean: a bound of the symmetric part follows the large
-        block alone and falls far below the stable increment whenever a particle loads a boundary. Instead, every
+        block alone and falls far below the critical time step whenever a particle loads a boundary. Instead, every
         eigenvalue, real or complex, satisfies :math:`|\\lambda| \\le \\rho(|\\boldsymbol{S}|)`, the spectral radius of
         the absolute value of :math:`\\boldsymbol{S} = \\boldsymbol{D}\\boldsymbol{K}\\boldsymbol{D}` (similar to
         :math:`\\boldsymbol{M}^{-1}\\boldsymbol{K}`, with :math:`\\boldsymbol{D} = \\boldsymbol{M}^{-1/2}`, or
@@ -512,7 +513,7 @@ class MPMDiscreteSystem(DiscreteSystem):
         Returns
         -------
         float | None
-            The stable time increment; None if the model has no particles.
+            The critical time step; None if the model has no particles.
         """
 
         if not self.particles:
@@ -581,22 +582,6 @@ class MPMDiscreteSystem(DiscreteSystem):
             stable = min(stable, 2.0 / rate)
 
         return STABLE_FRACTION_OF_THE_TANGENT_LIMIT * stable
-
-    def entitiesWithOwnInertiaCoupleOtherNodes(self) -> bool:
-        """Whether the last connectivity update changed the set of kernel functions of a particle, as its particle
-        manager reports it; see
-        :meth:`~edelweissfe.models.discretesystem.DiscreteSystem.entitiesWithOwnInertiaCoupleOtherNodes`. A contact
-        paired anew does not count: it changes the locations, not the particles' system.
-
-        Returns
-        -------
-        bool
-            True if a particle reaches other kernel functions since the last connectivity update.
-        """
-
-        return any(
-            particleManager.particlesWithChangedKernelFunctions for particleManager in self.model.particleManagers
-        )
 
     def carriersOfTheMotion(self) -> set[str]:
         """Where the model holds the motion of its particles; see

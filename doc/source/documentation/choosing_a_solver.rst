@@ -268,11 +268,15 @@ the particles, so every increment
 The lumped mass of the particles is assembled anew in every increment, and the nodal values are coefficients of the
 current kernel functions; the finite elements keep the mass of their numbering. The lumped damping of the particles
 (the nonlocal viscosity of gradient-enhanced particles) is assembled with it, and decides, with the inertia, how a
-field is integrated. The stable time increment of the particles is bounded from their stiffness and the assembled
+field is integrated. The critical time step of the particles is estimated from their stiffness and the assembled
 lumped mass
-(:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.stableTimeIncrementOfEntitiesWithOwnInertia`) in
-the zero increment, whenever a particle reaches other kernel functions (a contact paired anew does not count: it
-changes no particle), and every ``stable-increment-frequency`` increments; the time
+(:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`) in
+the zero increment, and anew whenever the margin of the last estimate over the time increment in use may be used up:
+by the fall of their lumped mass since, which ``NED`` follows in every increment (a node a particle reaches for the
+first time gets a mass from zero: then at once), or by the assumed fall per increment from their stiffness, option
+``critical-time-step-decrease-per-increment`` (see the theory page on the critical time step of EdelweissFE). Where
+the particles set the time increment, they are estimated in every increment; where the finite elements set it, every
+so many increments as their margin allows. The time
 increment is the smaller of it and the elements' critical time step, scaled by ``courant-number``, unless the step asks
 for smaller increments. It is the Gershgorin bound of the absolute value of the mass-scaled tangent per block of fields,
 coupled by the largest eigenvalue of the small matrix of these blocks. No tangent is assembled for it: every particle
@@ -315,7 +319,7 @@ What to know
   EdelweissFE's *What the solver asks the model*). When the active nodes cannot change (bonded kernel functions, no
   material point managers), a change of the connectivity is a change of the locations: the solver wraps its vectors
   with the new locations, their values kept. Otherwise it is a change of the numbering, and the solver reads the state
-  by node from the model; the stable time increment and the classification of the fields, which belong to the mesh, are
+  by node from the model; the critical time step and the classification of the fields, which belong to the mesh, are
   kept.
 - **Nodes without mass.** A kernel function that the particles reach only where it vanishes has no positive lumped
   mass; its node has no equation of motion and has no velocity, also after it lost its mass while it moved.
