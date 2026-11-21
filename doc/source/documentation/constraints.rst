@@ -217,5 +217,19 @@ analytic wall), 187 (impact of particles and of finite elements on finite elemen
 between two platens of finite elements, against a block of finite elements) and 193 (a toy pull-out: the head of a stud
 of finite elements bearing on particles, implicit).
 
+The same constraint with the law ``type=tied`` **ties** particles to finite elements instead (EdelweissFE's contact
+theory, *A tie*): each point of a face of a particle is paired once with the closest point of the faces of the
+elements, and held there in every direction by penalty springs, in tension and compression; a gap or an overlap of the
+two surfaces at the pairing -- two meshes of one curved surface never coincide -- is part of the state at rest. It
+joins a region of particles to a far field of finite elements, in 3D, in implicit and explicit analyses, and keeps its
+state when the elements are refined. Its tests are in the same file (at rest with a gap and with an overlap, pulled
+back in every direction, the tangent, a particle that moves on) and examples 194 (the patch test of the tie, implicit:
+a column of particles between two blocks of elements, stretched and sheared, with a gap or an overlap at the start) and
+195 (a pulse through a bar of elements with a tied segment of particles, explicit, against the bar of elements alone).
+Two things to know: the traction of a tie at a single point of particles follows the particles' small deviations from
+the exact displacement, magnified by the stiff springs -- its resultant over a few particles is the reliable measure;
+and the springs' stiffness raises the frequencies of the points they hold, so an explicit analysis needs a time
+increment for it (example 195 sets the Courant number).
+
 .. automodule:: edelweissmeshfree.constraints.base.contactpointsonparticlefaces
    :members:
