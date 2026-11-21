@@ -65,8 +65,8 @@ contact points are the quadrature points of the faces of the particles at the in
 (:class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`) and whose
 master is the faceted surface of the elements there. It ties each point, once, to the closest point of the elements'
 faces, keeps a gap or an overlap between the two meshes as the state at rest, and holds the point there by springs of
-the penalty stiffness per unit area -- so the interface is as compliant as the springs, and the springs are as stiff as
-the time increment of an explicit analysis allows. See :doc:`constraints`, *Contact of particles with finite elements*,
+the penalty stiffness per unit area -- so the interface is as compliant as the springs, and the stiffer the springs,
+the smaller the critical time step of an explicit analysis, which counts them. See :doc:`constraints`, *Contact of particles with finite elements*,
 and examples 194 (the patch test) and 195 (a pulse through the ties).
 
 .. code-block:: python

@@ -296,7 +296,7 @@ the stiffness relaxed over that time, softer than the response within an explici
 large; take a smaller ``courant-number`` there.
 
 A penalty constraint on the particles -- a support (``ParticlePenaltyWeakDirichlet``), a contact with points on their
-faces -- adds its stiffness to the frequencies of the nodes it couples. The constraints bound the row sums of their own
+faces, a tie of their faces to finite elements (springs along every axis) -- adds its stiffness to the frequencies of the nodes it couples. The constraints bound the row sums of their own
 stiffness, scaled by the lumped mass, in every increment, and these are added to the particles' row sums inside the
 field matrix (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`): where they
 raise no diagonal entry of it, the particles' estimate stands; a support or a contact far stiffer than the particles
