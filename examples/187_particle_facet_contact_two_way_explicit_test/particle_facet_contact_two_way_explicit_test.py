@@ -43,7 +43,10 @@ bottom faces of the finite elements:
   the contact gives to the two bodies are equal and opposite in every increment;
 - an elastic block falls onto a supported elastic block: with an impactor of particles, the contact force history and
   the rebound agree with those of an impactor of finite elements;
-- halving the time increment changes the penetration history by less than the stated tolerance.
+- halving the time increment changes the penetration history by less than the stated tolerance;
+- the contact's stiffness enters the critical time step: a contact far stiffer than the bodies lowers the time
+  increment, and the impact stays stable, where the time increment of the bodies alone lets the impactor rebound faster
+  than it came.
 """
 
 import argparse
@@ -67,6 +70,9 @@ from edelweissfe.journal.journal import Journal
 from edelweissfe.outputmanagers.base.outputmanagerbase import OutputManagerBase
 from edelweissfe.sections.plane import PlaneSectionSchema
 from edelweissfe.sections.plane import Section as PlaneSection
+from edelweissfe.solvers.base.criticaltimestep import (
+    CriticalTimeStepOfThePenaltyConstraints,
+)
 from edelweissfe.solvers.nonlinearexplicitdynamic import NED
 from edelweissfe.stepactions.dirichlet import StepAction as Dirichlet
 from edelweissfe.steps.adaptivestepforexplicitsimulations import (
@@ -227,7 +233,11 @@ def addParticleBlock(model: MPMModel, journal: Journal, name: str, x0: float, y0
 
 
 def run_sim(
-    impactor: str, target: str, courantNumber: float = COURANT_NUMBER, duration: float = 40e-6
+    impactor: str,
+    target: str,
+    courantNumber: float = COURANT_NUMBER,
+    duration: float = 40e-6,
+    penaltyPerArea: float = PENALTY_PER_AREA,
 ) -> ContactHistory:
     """Let an impactor fall onto a target.
 
@@ -241,6 +251,8 @@ def run_sim(
         The Courant number of NED, which sets the time increment.
     duration
         The duration of the step.
+    penaltyPerArea
+        The interface stiffness per unit area of the contact.
 
     Returns
     -------
@@ -256,7 +268,7 @@ def run_sim(
     addContactFacets(model, journal, "target_top", "targetTop")
 
     x0Impactor = -0.5 * IMPACTOR_SIZE
-    configuration = SurfaceToDeformableSurfacePenaltySchema(penalty=PENALTY_PER_AREA, searchDistance=SEARCH_DISTANCE)
+    configuration = SurfaceToDeformableSurfacePenaltySchema(penalty=penaltyPerArea, searchDistance=SEARCH_DISTANCE)
     if impactor == "particles":
         addParticleBlock(model, journal, "impactor", x0Impactor, STANDOFF, IMPACTOR_SIZE, IMPACTOR_SIZE)
         # two quadrature points on the bottom face of every particle of the bottom row
@@ -352,7 +364,10 @@ def test_the_contact_gives_equal_and_opposite_impulses_to_a_free_floating_plate(
     assert largestForce > 0.0
     np.testing.assert_allclose(forces[:, 0] + forces[:, 1], 0.0, atol=1e-12 * largestForce)
 
-    impulses = np.cumsum(forces * np.diff(history.times, prepend=0.0)[:, None, None], axis=0)
+    # the force of an increment accelerates the nodes over the mean of the increments before and after it (the leapfrog
+    # of NED), which differ where the contact lowers the time increment
+    timeIncrements = np.diff(history.times, prepend=0.0)
+    impulses = np.cumsum(forces * (0.5 * (timeIncrements + np.append(timeIncrements[1:], 0.0)))[:, None, None], axis=0)
     np.testing.assert_allclose(impulses[:, 0] + impulses[:, 1], 0.0, atol=1e-12 * np.abs(impulses).max())
 
     # the impulse the particle block received is the change of its momentum (it has no other load)
@@ -398,6 +413,23 @@ def test_halving_the_time_increment_changes_the_impact_little():
 
     assert impulse(coarse) == pytest.approx(impulse(fine), rel=0.005)
     assert max(coarse.penetrations) == pytest.approx(max(fine.penetrations), rel=0.03)
+
+
+def test_a_stiff_contact_lowers_the_time_increment_and_the_impact_stays_stable(monkeypatch):
+    """With a contact a hundred times stiffer, its springs set the critical time step: the time increment falls far
+    below the one of the bodies, and the impactor rebounds slower than it came. Without the estimate of the contact
+    (replaced by an infinite one, as before it existed), the step keeps the bodies' time increment, which is above the
+    critical time step of the contact, and the impactor leaves the contact faster than it came: energy from nowhere."""
+
+    stiff = 100 * PENALTY_PER_AREA
+
+    stable = run_sim("particles", "supported block", penaltyPerArea=stiff)
+    assert 0.0 < stable.velocities[-1] < abs(IMPACT_VELOCITY)
+
+    monkeypatch.setattr(CriticalTimeStepOfThePenaltyConstraints, "estimate", lambda self, *args: self._take(np.inf))
+    unstable = run_sim("particles", "supported block", penaltyPerArea=stiff)
+    assert len(stable.times) > 5 * len(unstable.times)
+    assert unstable.velocities[-1] > abs(IMPACT_VELOCITY)
 
 
 if __name__ == "__main__":
