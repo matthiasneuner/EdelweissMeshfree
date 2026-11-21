@@ -470,6 +470,12 @@ class BaseParticle(BaseNodeCouplingEntity):
         """
 
     @abstractmethod
+    def updateShapeFunctions(self):
+        """Evaluate the shape functions anew at the particle's current position, with the kernel functions it has been
+        assigned: the particle managers call it in every increment for the particles whose kernel functions did not
+        change (the particles have moved), and :meth:`assignKernelFunctions` for the others."""
+
+    @abstractmethod
     def getInterpolationVector(self, coordinate: np.ndarray) -> np.ndarray:
         """Get the interpolation vector for a given global coordinate.
 

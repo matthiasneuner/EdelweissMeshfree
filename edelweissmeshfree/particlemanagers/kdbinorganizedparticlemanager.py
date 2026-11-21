@@ -349,12 +349,12 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
         """Rebuild every particle's shape functions from its existing set of kernel functions.
 
         The particles have moved, so the shape functions are stale even though the neighbour lists are
-        not. Reassigning the unchanged set is what recomputes them.
+        not.
         """
 
         def rebuildChunk(particleChunk: List[Any]) -> None:
             for particle in particleChunk:
-                particle.assignKernelFunctions(particle.kernelFunctions)
+                particle.updateShapeFunctions()
 
         mapChunksInParallel(self._particles, rebuildChunk)
 
@@ -437,7 +437,7 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
                     )
 
                 if kernels == before[firstBefore[i] : firstBefore[i + 1]]:
-                    particle.assignKernelFunctions(particle.kernelFunctions)
+                    particle.updateShapeFunctions()
                 else:
                     particle.assignKernelFunctions([kernelFunctions[k] for k in kernels])
                     particlesWithChangedKernelFunctions.append(particle)

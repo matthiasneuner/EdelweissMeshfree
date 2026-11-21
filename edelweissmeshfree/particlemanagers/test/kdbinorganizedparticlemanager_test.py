@@ -70,6 +70,7 @@ class _Particle:
         self.points = np.array(points, dtype=float)
         self.kernelFunctions = []
         self.assignments = 0
+        self.shapeFunctionUpdates = 0
 
     def getEvaluationCoordinates(self) -> np.ndarray:
         return self.points
@@ -80,6 +81,9 @@ class _Particle:
     def assignKernelFunctions(self, kernelFunctions: list):
         self.kernelFunctions = kernelFunctions
         self.assignments += 1
+
+    def updateShapeFunctions(self):
+        self.shapeFunctionUpdates += 1
 
 
 def _model(rng: np.random.Generator, hasBoxSupport: bool = True):
@@ -116,7 +120,9 @@ def test_every_particle_gets_the_kernels_that_cover_it_and_the_changed_ones_are_
 
     assert not manager.updateConnectivity(), "nothing moved"
     assert manager.particlesWithChangedKernelFunctions == []
-    assert all(particle.assignments == 2 for particle in particles), "the shape functions are evaluated anew"
+    assert all(
+        particle.assignments == 1 and particle.shapeFunctionUpdates == 1 for particle in particles
+    ), "the kernel functions are the same, the shape functions are evaluated anew"
 
     moved = particles[3::7]
     for particle in moved:

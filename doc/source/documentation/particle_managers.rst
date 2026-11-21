@@ -23,9 +23,9 @@ in every increment, in three steps:
    EdelweissMeshfree (tensor-product B-splines) the support *is* the box, so this is the answer; a point on the boundary
    lies where the kernel function is zero and is not covered. A kernel function whose support is smaller than its box
    (``hasBoxSupport`` is false) is asked in addition whether its support holds one of the points.
-3. **Assignment.** A particle gets its kernel functions in the order of their labels, each once. It is assigned them in
-   every increment, also when they are the ones it had: it has moved, and the assignment evaluates its shape functions
-   anew. The particles whose kernel functions changed are reported
+3. **Assignment.** A particle gets its kernel functions in the order of their labels, each once. A particle whose kernel
+   functions changed is assigned the new ones; every other particle evaluates its shape functions anew with the ones it
+   has (``updateShapeFunctions``), since it has moved. The particles whose kernel functions changed are reported
    (:attr:`~edelweissmeshfree.particlemanagers.base.baseparticlemanager.BaseParticleManager.particlesWithChangedKernelFunctions`):
    only they are located anew in the degrees of freedom.
 
@@ -38,7 +38,8 @@ The particles are searched in chunks on the thread pool, and two things make tha
   the last search found them -- and only a particle whose kernel functions changed gets a new list. In free-threaded
   Python, every reference a worker thread takes to an object created by another thread is an atomic operation on that
   object; building new lists of the kernel functions for all particles in every increment takes *longer* with more
-  threads.
+  threads. For the same reason, a Marmot particle keeps the Marmot kernel functions of its list, and
+  ``updateShapeFunctions`` hands those to Marmot without touching a Python object.
 
 What remains of the update is mostly the evaluation of the shape functions, in Marmot, which no search can save.
 
