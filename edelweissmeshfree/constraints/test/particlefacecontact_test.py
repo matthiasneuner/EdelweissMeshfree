@@ -53,6 +53,7 @@ from edelweissfe.generators.planerectquad import PlaneRectQuadSchema
 from edelweissfe.generators.surfaceelementgenerator import buildContactFacets
 from edelweissfe.points.node import Node
 from edelweissfe.sets.elementset import ElementSet
+from edelweissfe.timesteppers.timestep import TimeStep
 from edelweissfe.utils.residualtangentcheck import (
     finiteDifferenceTangent,
     residualContributionAndTangent,
@@ -196,6 +197,41 @@ def test_an_overlap_at_the_first_update_is_contact():
     assert contact.stateOfPoints[0] == ContactState.IN_CONTACT
     _residual(contact)
     assert contact.numberOfPointsInContact == 1
+
+
+def test_an_overlap_at_the_first_update_can_be_ramped_out():
+    """With ``initialOverlapRampTime``, a tilted face that overlaps the master at the first update starts without a
+    force -- the overlap is measured for each point as the evaluation measures it, from the particle -- and carries the
+    full force once the ramp time has passed."""
+
+    def at(time: float) -> TimeStep:
+        return TimeStep(1, 0.0, 0.0, 0.0, time, time)
+
+    forces = {}
+    for rampTime in (0.0, 1e-3):
+        model = MPMModel(2)
+        particles = [_particle(0.12, -0.03, 1, angle=0.05), _particle(0.40, -0.02, 2, angle=-0.03)]
+        contact = SurfaceContact(
+            "contact",
+            model,
+            ContactPointsOnParticleFaces([(particle, 1) for particle in particles], 2),
+            _masterBlock(model, JournalStandIn()),
+            JournalStandIn(),
+            configuration=SurfaceToDeformableSurfacePenaltySchema(
+                penalty=PENALTY, searchDistance=SEARCH, initialOverlapRampTime=rampTime
+            ),
+        )
+        contact.updateConnectivity(model)
+        assert (contact.stateOfPoints == ContactState.IN_CONTACT).all()
+        for time in (0.0, 2e-3):
+            contact.computeKernelsExplicit(
+                np.zeros(contact.nDof), np.zeros(contact.nDof), np.zeros(contact.nDof), at(time)
+            )
+            forces[rampTime, time] = contact.contactForceOnSlave
+
+    np.testing.assert_allclose(forces[1e-3, 0.0], 0.0, atol=1e-12 * np.abs(forces[0.0, 0.0]).max())
+    assert np.abs(forces[0.0, 0.0]).max() > 0.0
+    np.testing.assert_array_equal(forces[1e-3, 2e-3], forces[0.0, 2e-3])
 
 
 def test_a_point_that_tunnels_through_the_search_distance_gets_no_force_and_is_reported():
