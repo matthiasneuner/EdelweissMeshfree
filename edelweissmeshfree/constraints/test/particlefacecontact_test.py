@@ -327,3 +327,70 @@ def test_faces_of_particles_other_than_quadrilaterals_and_hexahedra_are_refused(
     particle = ParticleStandIn([Node(1, np.zeros(2))], np.zeros(2), np.zeros((3, 2)))
     with pytest.raises(ValueError, match="quadrilateral"):
         ContactPointsOnParticleFaces([(particle, 1)])
+
+
+def _tie(model, particles, master, nQuadraturePoints=2, searchDistance=SEARCH):
+    """The tie (``type=tied``) of the bottom faces of the particles to the master, connected."""
+
+    return _contact(
+        model, particles, master, nQuadraturePoints=nQuadraturePoints, contactType="tied", searchDistance=searchDistance
+    )
+
+
+@pytest.mark.parametrize("y0", [0.02, 0.0, -0.02])
+def test_a_tied_face_with_a_gap_or_an_overlap_is_at_rest_and_pulled_back_in_every_direction(y0):
+    """The gap (or overlap) of a particle face at the pairing is the state at rest: no force. Moved by ``d`` with its
+    kernel nodes, the face is pulled back with the traction ``-k d``, away from the master and along it alike."""
+
+    model = MPMModel(2)
+    master = _masterBlock(model, JournalStandIn())
+    particle = _particle(0.3, y0)
+    tie = _tie(model, [particle], master)
+    assert (tie.stateOfPoints == ContactState.TIED).all()
+
+    np.testing.assert_allclose(_residual(tie), 0.0, atol=1e-12)
+    for d in ([0.0, 0.01], [0.0, -0.01], [0.01, 0.0], [-0.01, 0.005]):
+        dU = np.zeros(tie.nDof)
+        dU[: 2 * len(particle.kernelFunctions)] = np.tile(d, len(particle.kernelFunctions))  # the particle's nodes
+        P = np.zeros(tie.nDof)
+        tie.computeKernelsExplicit(dU, dU, P, None)
+        np.testing.assert_allclose(tie.getTractions(), np.tile(-PENALTY * np.array(d), (tie.nPoints, 1)), atol=1e-9)
+        np.testing.assert_allclose(tie.contactForceOnSlave, -PENALTY * SIZE * np.array(d), atol=1e-9)
+        np.testing.assert_allclose(tie.contactForceOnSlave + tie.contactForceOnMaster, 0.0, atol=1e-12)
+
+
+def test_the_tangent_of_a_tie_of_particle_faces_is_the_derivative_of_its_residual_contribution():
+    """``K == dP/dU`` by central differences, for tilted faces of two particles astride two elements, one with a gap at
+    rest, one with an overlap."""
+
+    model = MPMModel(2)
+    master = _masterBlock(model, JournalStandIn())
+    particles = [_particle(0.12, 0.03, 1, angle=0.05), _particle(0.40, -0.02, 2, angle=-0.03)]
+    tie = _tie(model, particles, master)
+    assert (tie.stateOfPoints == ContactState.TIED).all()
+
+    dU = 1e-3 * np.random.default_rng(1).standard_normal(tie.nDof)
+    P, K = residualContributionAndTangent(tie, dU.copy(), dU)
+    dP_dU = finiteDifferenceTangent(tie, dU.copy(), dU, h=1e-8)
+    assert np.abs(P).max() > 0.0
+    np.testing.assert_allclose(K, dP_dU, atol=1e-6 * np.abs(K).max())
+    np.testing.assert_allclose(K, K.T, atol=1e-12 * np.abs(K).max())
+
+
+def test_a_tied_particle_carries_its_displacement_from_rest_into_the_next_increment():
+    """The particles are updated-Lagrangian: at the next update the tied points are located anew, at the positions the
+    particles moved them to, and the tie measures their displacement from rest from there -- it stays tied to the same
+    point of the master however far it moves."""
+
+    model = MPMModel(2)
+    master = _masterBlock(model, JournalStandIn())
+    particle = _particle(0.3, 0.01)
+    tie = _tie(model, [particle], master)
+    pairing = tie._assignedFacetIdx.copy()
+
+    d = np.array([0.3, 0.4])  # beyond the search distance and the next facet
+    _move(particle, d)
+    tie.updateConnectivity(model)
+    np.testing.assert_array_equal(tie._assignedFacetIdx, pairing)
+    _residual(tie)
+    np.testing.assert_allclose(tie.contactForceOnSlave, -PENALTY * SIZE * d, rtol=1e-12)
