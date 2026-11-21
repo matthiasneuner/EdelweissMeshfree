@@ -119,7 +119,16 @@ def _move(particle: ParticleStandIn, offset):
     particle.center = particle.center + np.asarray(offset, dtype=float)
 
 
-def _contact(model, particles, master, journal=None, nQuadraturePoints=1, contactType="linear", searchDistance=SEARCH):
+def _contact(
+    model,
+    particles,
+    master,
+    journal=None,
+    nQuadraturePoints=1,
+    contactType="linear",
+    searchDistance=SEARCH,
+    initialOverlap="pushApart",
+):
     """The contact of the bottom faces (face 1) of the particles with the master, connected."""
 
     contact = SurfaceContact(
@@ -129,7 +138,7 @@ def _contact(model, particles, master, journal=None, nQuadraturePoints=1, contac
         master,
         journal or JournalStandIn(),
         configuration=SurfaceToDeformableSurfacePenaltySchema(
-            penalty=PENALTY, contactType=contactType, searchDistance=searchDistance
+            penalty=PENALTY, contactType=contactType, searchDistance=searchDistance, initialOverlap=initialOverlap
         ),
     )
     contact.updateConnectivity(model)
@@ -232,6 +241,54 @@ def test_an_overlap_at_the_first_update_can_be_ramped_out():
     np.testing.assert_allclose(forces[1e-3, 0.0], 0.0, atol=1e-12 * np.abs(forces[0.0, 0.0]).max())
     assert np.abs(forces[0.0, 0.0]).max() > 0.0
     np.testing.assert_array_equal(forces[1e-3, 2e-3], forces[0.0, 2e-3])
+
+
+def test_an_adjusted_overlap_at_the_first_update_is_the_state_at_rest():
+    """With ``initialOverlap=adjust``, tilted faces of particles that overlap the master at the first update (flat faces
+    standing for a curved surface) rest there without a force; pressed further in, they carry the force of the further
+    approach alone -- what the same faces pushed apart carry more than at the start, the law being linear -- with the
+    tangent the derivative of the residual contribution. A checkpoint carries the offsets."""
+
+    def residualAfter(contact, approach: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        dU = np.zeros(contact.nDof)
+        dU[: contact._nSlaveDof] = np.tile(approach, contact._nSlaveDof // 2)  # the particles' kernel nodes
+        return residualContributionAndTangent(contact, dU, dU)
+
+    residuals, contacts = {}, {}
+    for initialOverlap in ("pushApart", "adjust"):
+        model = MPMModel(2)
+        particles = [_particle(0.12, -0.03, 1, angle=0.05), _particle(0.40, -0.02, 2, angle=-0.03)]
+        contact = _contact(
+            model, particles, _masterBlock(model, JournalStandIn()), nQuadraturePoints=2, initialOverlap=initialOverlap
+        )
+        assert (contact.stateOfPoints == ContactState.IN_CONTACT).all()
+        for approach in ((0.0, 0.0), (0.0, -0.01)):
+            residuals[initialOverlap, approach] = residualAfter(contact, np.array(approach))[0]
+        contacts[initialOverlap] = contact
+
+    adjusted = contacts["adjust"]
+    assert adjusted._initialOverlap.min() < -0.02
+    np.testing.assert_array_equal(residuals["adjust", (0.0, 0.0)], 0.0)
+    pushedFurther = residuals["pushApart", (0.0, -0.01)] - residuals["pushApart", (0.0, 0.0)]
+    assert np.abs(pushedFurther).max() > 0.0
+    np.testing.assert_allclose(
+        residuals["adjust", (0.0, -0.01)], pushedFurther, atol=1e-12 * np.abs(pushedFurther).max()
+    )
+
+    dU = 1e-3 * np.random.default_rng(5).standard_normal(adjusted.nDof)
+    dU[: adjusted._nSlaveDof] += np.tile([0.0, -0.01], adjusted._nSlaveDof // 2)
+    K = residualContributionAndTangent(adjusted, dU, dU)[1]
+    np.testing.assert_allclose(K, finiteDifferenceTangent(adjusted, dU, dU, h=1e-8), atol=1e-6 * np.abs(K).max())
+
+    model = MPMModel(2)
+    particles = [_particle(0.12, -0.03, 1, angle=0.05), _particle(0.40, -0.02, 2, angle=-0.03)]
+    master = _masterBlock(model, JournalStandIn())
+    checkpointed = _contact(model, particles, master, nQuadraturePoints=2, initialOverlap="adjust")
+    restored = _contact(model, particles, master, nQuadraturePoints=2, initialOverlap="adjust", searchDistance=1e-9)
+    restored.setRestartData(checkpointed.getRestartData())
+    restored.updateConnectivity(model)  # locates the restored points; not the first search: nothing recorded anew
+    np.testing.assert_array_equal(restored._initialOverlap, checkpointed._initialOverlap)
+    np.testing.assert_array_equal(residualAfter(restored, np.array([0.0, -0.01]))[0], residuals["adjust", (0.0, -0.01)])
 
 
 def test_a_point_that_tunnels_through_the_search_distance_gets_no_force_and_is_reported():
