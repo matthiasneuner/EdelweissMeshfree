@@ -36,9 +36,10 @@
 
 A steel projectile of finite elements (``C3D20RUL``, ``VONMISES/HUGHES-WINGET``) hits, at 300 m/s, a concrete slab of
 RKPM particles (``GradientEnhanced6FiniteStrainSQCNIxNSNI/3D/Hexa``, ``GM7/COROTATIONAL``) held at its edges; the two
-meet through the two-way penalty contact of
-:class:`~edelweissmeshfree.constraints.explicit.particlepenaltyfacetcontactexplicit.ParticlePenaltyFacetContactExplicit`,
-and one explicit analysis, EdelweissFE's ``NEDParallel``, integrates both. A quarter model, with the symmetry planes
+meet through EdelweissFE's penalty contact (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`), whose
+contact points are the quadrature points of the faces of the particles
+(:class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`), and one
+explicit analysis, EdelweissFE's ``NEDParallel``, integrates both. A quarter model, with the symmetry planes
 x = 0 and y = 0. The tutorial includes its code from this file; the production run of the tutorial is the same model,
 larger and longer.
 
@@ -53,12 +54,19 @@ Units: N, mm, t, s.
 import numpy as np
 import pytest
 from edelweissfe.config.configurator import loadConfiguration
+from edelweissfe.constraints.surfacetodeformablesurfacepenalty import (
+    Constraint as SurfaceContact,
+)
+from edelweissfe.constraints.surfacetodeformablesurfacepenalty import (
+    SurfaceToDeformableSurfacePenaltySchema,
+)
 from edelweissfe.generators.boxgen import BoxgenSchema
 from edelweissfe.generators.boxgen import Generator as BoxGenerator
 from edelweissfe.generators.surfaceelementgenerator import buildContactFacets
 from edelweissfe.journal.journal import Journal
 from edelweissfe.outputmanagers.base.outputmanagerbase import OutputManagerBase
 from edelweissfe.sections.solid import Section as SolidSection
+from edelweissfe.sets.elementset import ElementSet
 from edelweissfe.solvers.nonlinearexplicitdynamicparallel import NEDParallel
 from edelweissfe.stepactions.dirichlet import StepAction as Dirichlet
 from edelweissfe.steps.adaptivestepforexplicitsimulations import (
@@ -66,8 +74,8 @@ from edelweissfe.steps.adaptivestepforexplicitsimulations import (
 )
 from edelweissfe.steps.stepmanager import StepActionCollection
 
-from edelweissmeshfree.constraints.explicit.particlepenaltyfacetcontactexplicit import (
-    ParticlePenaltyFacetContactExplicit,
+from edelweissmeshfree.constraints.base.contactpointsonparticlefaces import (
+    ContactPointsOnParticleFaces,
 )
 from edelweissmeshfree.constraints.particlepenaltyweakdirichtlet import (
     ParticlePenaltyWeakDirichlet,
@@ -105,8 +113,9 @@ SLAB_THICKNESS, HALF_SPAN, LAYERS = 100.0, 100.0, 5
 NONLOCAL_VISCOSITY = 2e-6
 GM7 = [30600.0, 0.2, 0.903e-4, 110.0, 18.0, 100.0, 1e-4, 16.0, 1.05, 9.9, 32.3, 4.0, 0.4, 1.0, 2.4e-9]
 GM7 += [NONLOCAL_VISCOSITY, NONLOCAL_VISCOSITY**2 / 4]
-#: The penalties: of the supports and symmetry planes, and of the contact, per point; and the contact search distance.
-SUPPORT_PENALTY, CONTACT_PENALTY, SEARCH_DISTANCE = 1e6, 2e5, 10.0
+#: The penalties: of the supports and symmetry planes, per point; of the contact, per unit area [N/mm^3]; and the contact
+#: search distance.
+SUPPORT_PENALTY, CONTACT_PENALTY, SEARCH_DISTANCE = 1e6, 2e3, 10.0
 #: The vertices of a hexahedral particle on its faces x min, x max, y min, y max.
 VERTICES_ON_FACE = {"xMin": [0, 3, 4, 7], "xMax": [1, 2, 5, 6], "yMin": [0, 1, 4, 5], "yMax": [2, 3, 6, 7]}
 
@@ -227,16 +236,24 @@ def holdTheSlab(model: MPMModel):
         )
 
 
-def addTheContact(model: MPMModel, facets: list, journal: Journal) -> ParticlePenaltyFacetContactExplicit:
-    """The contact of the vertices of the particles the projectile can reach (here, those within one particle of its
-    footprint) with the facets of the projectile."""
+def addTheContact(model: MPMModel, facets: list, journal: Journal) -> SurfaceContact:
+    """The contact of the particles the projectile can reach (here, those within one particle of its footprint) with
+    the facets of the projectile: four quadrature points on every face of these particles, also on the faces inside
+    the slab, which the projectile meets as it penetrates."""
 
     reach = PROJECTILE_EDGE / 2 + SLAB_THICKNESS / LAYERS
     particlesNearTheImpact = [
         particle for particle in model.particleSets["slab_all"] if np.all(particle.getCenterCoordinates()[:2] <= reach)
     ]
-    contact = ParticlePenaltyFacetContactExplicit(
-        "contact", model, particlesNearTheImpact, facets, CONTACT_PENALTY, SEARCH_DISTANCE, journal
+    contact = SurfaceContact(
+        "contact",
+        model,
+        ContactPointsOnParticleFaces(
+            [(particle, faceID) for particle in particlesNearTheImpact for faceID in range(1, 7)], nQuadraturePoints=4
+        ),
+        ElementSet("projectile_contact", facets),
+        journal,
+        configuration=SurfaceToDeformableSurfacePenaltySchema(penalty=CONTACT_PENALTY, searchDistance=SEARCH_DISTANCE),
     )
     model.constraints["contact"] = contact
     return contact
@@ -263,7 +280,7 @@ class ImpactRecord(OutputManagerBase):
 
     checkpointedState = {}
 
-    def __init__(self, model: MPMModel, solver: NEDParallel, contact: ParticlePenaltyFacetContactExplicit):
+    def __init__(self, model: MPMModel, solver: NEDParallel, contact: SurfaceContact):
         self.name = "impactRecord"
         self._model, self._solver, self._contact = model, solver, contact
         displacement = model.nodeFields["displacement"]
@@ -283,7 +300,7 @@ class ImpactRecord(OutputManagerBase):
         self.rows.append(
             dict(
                 time=self._model.time,
-                actionPlusReaction=contact.contactForceOnParticles + contact.contactForceOnMaster,
+                actionPlusReaction=contact.contactForceOnSlave + contact.contactForceOnMaster,
                 forceOnMaster=float(np.linalg.norm(contact.contactForceOnMaster)),
                 inContact=contact.numberOfPointsInContact,
                 foundInside=contact.numberOfPointsFoundInside,
