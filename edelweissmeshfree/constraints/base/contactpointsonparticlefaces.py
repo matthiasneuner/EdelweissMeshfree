@@ -122,6 +122,10 @@ class ContactPointsOnParticleFaces(ContactPoints):
         The number of quadrature points per face: 1 (the face's center) or 2 in 2D, 1 or 4 (2 x 2) in 3D.
     """
 
+    #: The points are located on the kernel functions of their particles, which the model connects at an update of the
+    #: connectivity (and a checkpoint does not hold).
+    locatedOnlyWhenConnected = True
+
     def __init__(self, faces: dict | Iterable, nQuadraturePoints: int = 1):
         pairs = (
             [(particle, faceID) for faceID, particles in faces.items() for particle in particles]

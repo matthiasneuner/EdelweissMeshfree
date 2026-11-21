@@ -310,6 +310,10 @@ def test_a_point_that_leaves_is_released_and_out_of_reach_takes_the_constraint_o
 
 
 def test_the_restart_continues_the_pairing():
+    """A contact restored from a checkpoint continues the pairing: a point in contact stays in contact, also when the
+    search distance would not find it anew. The checkpoint is read before the particles are connected to their kernel
+    functions (a resumed run connects them at its first update of the connectivity), so the points are located then."""
+
     model = MPMModel(2)
     master = _masterBlock(model, JournalStandIn())
     particle = _particle(0.3, -0.01)
@@ -318,7 +322,12 @@ def test_the_restart_continues_the_pairing():
 
     restored = _contact(model, [particle], master, searchDistance=1e-9)
     assert restored.stateOfPoints[0] == ContactState.FREE
+    kernelFunctions, particle.kernelFunctions = particle.kernelFunctions, None
     restored.setRestartData(contact.getRestartData())
+    assert restored.stateOfPoints[0] == ContactState.IN_CONTACT
+
+    particle.kernelFunctions = kernelFunctions
+    restored.updateConnectivity(model)
     assert restored.stateOfPoints[0] == ContactState.IN_CONTACT
     np.testing.assert_array_equal(_residual(restored), forces)
 
