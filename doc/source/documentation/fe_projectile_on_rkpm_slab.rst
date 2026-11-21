@@ -131,16 +131,17 @@ The time increment
 step of the particles, estimated from their stiffness without assembling it, and scales it by ``courant-number``.
 The particles are estimated anew when the margin of their last estimate over the time increment may be used up (see
 :doc:`choosing_a_solver`, "Explicit dynamics"): while the elements of the projectile set the time increment, every few
-increments; once the particles set it, in every increment. In the GM7 slab they do from about two hundred microseconds
-on: the particles at the rim of the crater are stretched to several times their volume, and the nonlocal field of a
+increments; once the particles set it, in every increment. In the GM7 slab they do late in the
+run: the particles at the rim of the crater are stretched to several times their volume, and the nonlocal field of a
 gradient-enhanced particle, balanced with gradients in the reference configuration, stiffens with the stretch while
 its micro-inertia does not. The estimate takes the tangent of the gradient-enhanced particles as
 it is, unsymmetric: while the concrete under the nose is crushed, GM7's stress depends on the nonlocal strain through
 the steep compressive boundary, far more strongly than the nonlocal strain depends on the strain, and the bound follows
 the geometric mean of the two couplings, as the eigenvalues do. Here the limit of the particles is that of the nonlocal
-field, set by its micro-inertia, and it stays above the projectile's elements: the elements set the time increment.
-The penalty springs of the contact and of the supports add to the frequencies of the nodes they couple, in every
-increment; here they stay below the limits of the parts at those nodes and leave the time increment as it is. Check the
+field, set by its micro-inertia, and it stays above the projectile's elements until the particles at the rim of the
+crater are stretched. The penalty springs of the contact and of the supports add to the frequencies of the nodes they
+couple, in every increment: from the first touch on, the contact springs at the nose lower the time increment a few
+percent below the limit of the projectile's elements, and further at the stretched rim late in the run. Check the
 result by halving the time increment.
 
 Running it
@@ -187,12 +188,13 @@ projectile's motion, and check:
   quartered. The whole model is not exactly symmetric itself: the facets split every face along a fixed diagonal.
 
 Example 191 asserts the checks of energy, action and reaction, time increment and search distance on its first 40 us.
-Done on a small slab of the particle size of the production run, the checks came out as follows: the kinetic energy never exceeded the
-initial one; action and reaction cancelled to round-off in every increment, and the projectile's momentum followed the
-contact impulse to round-off; halving the time increment changed the penetration by a few hundredths of a millimetre,
-a tenfold penalty range by about half a millimetre, the size of the change of the overlap; the deepest overlap was
-about a tenth of the search distance and no point was found inside; the quarter model followed the whole one to a few
-tenths of a millimetre. A run resumed from a checkpoint after an interruption followed the uninterrupted one.
+Done on a small slab of the particle size of the production run, over its first 100 us, the checks came out as follows:
+the kinetic energy never exceeded the initial one; action and reaction cancelled to round-off in every increment, and the
+projectile's momentum followed the contact impulse to round-off; halving the time increment changed the penetration by
+about a hundredth of a millimetre, a tenfold larger or smaller penalty by a few tenths of a millimetre, of the order of
+the change of the overlap; the deepest overlap was about a tenth of the search distance and no point was found inside;
+the quarter model followed the whole one to a few tenths of a millimetre. A run resumed from a checkpoint after an
+interruption followed the uninterrupted one.
 
 The critical time step of the particles costs a small share of an increment: the particles bound the row
 sums of their absolute stiffness node by node, and only when the margin policy asks for it.
@@ -205,14 +207,18 @@ What the run shows
 ------------------
 
 The production run is the quarter of a slab of 600 x 600 x 100 mm in seven layers of particles (3087 particles) and of
-the projectile in 2 x 2 x 4 elements, made with the contact on the vertices of the particles that the contact points on
-their faces replaced, with the restart output manager and an output manager that stops the step at a
-nose depth of 40 mm. It ran until the nose reached the stop depth of 40 mm at
-333 us, with the time increment set by the projectile's elements throughout. The checks held over the whole run: the
-kinetic energy never exceeded the initial one, action and reaction cancelled to round-off, the projectile's momentum
-followed the contact impulse to round-off, and no point was found inside. The projectile slowed from 300 to 148 m/s in
-the first 100 us and to 57 m/s at the stop; the contact force averaged over 5 us peaked at 3.3 MN after 20 to 25 us
-(the first touch, a few points at full speed, is a spike set by the penalty). At the stop, about two fifths of the
-particles had cracked, through the whole thickness and out to the supported edges, and the most crushed ones were under
-the nose and in the rear layer. The result depends on the particle size (see above), which the regularization of GM7
-does not remove at this size.
+the projectile in 2 x 2 x 4 elements, with the contact of this page (four points on every face of the particles near the
+impact), the restart output manager and an output manager that stops the step at a nose depth of 40 mm. The checks held
+over the whole run: the kinetic energy never exceeded the initial one, action and reaction cancelled to round-off, the
+projectile's momentum followed the contact impulse to round-off, no point was found inside, and the deepest overlap
+stayed below a seventh of the search distance. The nose was 12.4 mm deep after 50 us and 20.6 mm after 100 us; with one
+contact point per face instead of four, or with the contact on the vertices of the particles that the points on their
+faces replaced, these depths differ by a few percent.
+
+Later quantities are not results of this model: when the nose reaches the stop depth, its velocity then and the force
+late in the run change by tens of percent with the number of contact points per face. Once the concrete under the nose
+is crushed, a handful of contact points carries the projectile, and their number decides how fast it is braked. A study
+of the particle size and the contact points per face together has to come before such a number is quoted. When the
+nose reached the stop depth, two fifths of the particles or more had cracked, through the whole thickness and out to
+the supported edges, and the most crushed ones were under the nose and in the rear layer. The result depends on the
+particle size (see above), which the regularization of GM7 does not remove at this size.
