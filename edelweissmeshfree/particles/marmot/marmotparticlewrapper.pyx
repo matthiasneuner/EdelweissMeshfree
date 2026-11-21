@@ -258,11 +258,11 @@ cdef class MarmotParticleWrapper:
         :attr:`edelweissfe.nodecouplingentity.base.nodecouplingentity.BaseNodeCouplingEntity.scalarVariables`."""
         return ()
 
-    def computeLumpedMomentum(self, double[::1] mLumped ):
+    def computeLumpedMomentum(self, double[::1] pLumped ):
         """Add the lumped momentum; see
         :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.computeLumpedMomentum`."""
 
-        self._marmotParticle.computeLumpedMomentum(&mLumped[0])
+        self._marmotParticle.computeLumpedMomentum(&pLumped[0])
 
     def computeLumpedDamping(self, double[::1] cLumped ):
         """Add the lumped damping; see

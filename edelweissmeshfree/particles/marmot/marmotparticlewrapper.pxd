@@ -126,7 +126,7 @@ cdef extern from "Marmot/MarmotParticle.h":
 
         void computeLumpedInertia ( double* mLumped) except +
 
-        void computeLumpedMomentum ( double* mLumped) except +
+        void computeLumpedMomentum ( double* pLumped) except +
 
         const unordered_map[string, int]& getSupportedBodyLoadTypes() except +
 
