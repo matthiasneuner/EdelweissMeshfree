@@ -59,6 +59,27 @@ condition too.
 
 The constraint must be part of the model before ``model.prepareYourself``, which creates the multipliers.
 
+The mortar tie is for implicit analyses in 2D: an explicit solver does not take multipliers. In 3D, and in explicit
+analyses, a **penalty tie** joins the two domains: EdelweissFE's contact constraint with the law ``type=tied``, whose
+contact points are the quadrature points of the faces of the particles at the interface
+(:class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`) and whose
+master is the faceted surface of the elements there. It ties each point, once, to the closest point of the elements'
+faces, keeps a gap or an overlap between the two meshes as the state at rest, and holds the point there by springs of
+the penalty stiffness per unit area -- so the interface is as compliant as the springs, and the springs are as stiff as
+the time increment of an explicit analysis allows. See :doc:`constraints`, *Contact of particles with finite elements*,
+and examples 194 (the patch test) and 195 (a pulse through the ties).
+
+.. code-block:: python
+
+    from edelweissfe.constraints.surfacetodeformablesurfacepenalty import Constraint, SurfaceToDeformableSurfacePenaltySchema
+    from edelweissmeshfree.constraints.base.contactpointsonparticlefaces import ContactPointsOnParticleFaces
+
+    model.constraints["tie"] = Constraint(
+        "tie", model, ContactPointsOnParticleFaces(model.surfaces["rkpm_bottom"], nQuadraturePoints=4),
+        model.elementSets["fe_top_facets"], journal,
+        configuration=SurfaceToDeformableSurfacePenaltySchema(penalty=1e6, contactType="tied", searchDistance=0.5),
+    )
+
 Building a coupled model
 ------------------------
 
