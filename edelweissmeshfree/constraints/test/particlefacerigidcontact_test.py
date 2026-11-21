@@ -225,3 +225,30 @@ def test_a_particle_out_of_reach_takes_no_part_until_it_approaches(tmp_path):
     assert contact.nDof == 8 * 3 + 6
     np.testing.assert_array_equal(_residual(contact), 0.0)
     np.testing.assert_allclose(contact.getGaps(), 0.05, rtol=1e-6)
+
+
+def test_the_restart_locates_the_points_once_the_particles_are_connected(tmp_path):
+    """A contact restored from a checkpoint before the particles are connected to their kernel functions (a resumed run
+    connects them at its first update of the connectivity) keeps the projection and locates its points then, with the
+    same forces."""
+
+    model, rigidBody = _rigidSupport(tmp_path)
+    particle = _particle(0.3, 0.6, -0.02)
+    contact = _contact(model, rigidBody, [particle])
+    forces = _residual(contact)
+
+    kernelFunctions, particle.kernelFunctions = particle.kernelFunctions, None
+    restored = RigidSurfaceContact(
+        "contact",
+        model,
+        ContactPointsOnParticleFaces([(particle, BOTTOM)]),
+        rigidBody,
+        JournalStandIn(),
+        configuration=SurfaceToDiscreteRigidBodyPenaltySchema(penalty=PENALTY, searchDistance=SEARCH),
+    )
+    restored.setRestartData(contact.getRestartData())
+    assert restored.nDof == 6, "not located before the particles are connected"
+
+    particle.kernelFunctions = kernelFunctions
+    assert restored.updateConnectivity(model)
+    np.testing.assert_array_equal(_residual(restored), forces)
