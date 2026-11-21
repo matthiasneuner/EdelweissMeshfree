@@ -231,5 +231,21 @@ the exact displacement, magnified by the stiff springs -- its resultant over a f
 and the springs' stiffness raises the frequencies of the points they hold, which ``NED``'s critical time step counts
 (its springs along the axes, like the contact's normal spring; :doc:`choosing_a_solver`).
 
+Contact of particles with a rigid body
+--------------------------------------
+
+The same contact points meet a discrete rigid body -- a support, an indenter, a projectile that does not deform --
+through EdelweissFE's :mod:`edelweissfe.constraints.surfacetodiscreterigidbodypenalty`, the contact of the faces and
+nodes of finite elements with a rigid body (EdelweissFE's contact theory, *Integrated contact against a discrete rigid
+body*): the constraint is built with :class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`
+in place of the faces of elements. Each point is paired with the plane of its closest triangle of the rigid surface,
+which moves and rotates with the body's reference point; the force of a point reaches the nodes of the kernel functions
+of its particle with :math:`\mathbf{G}`, and the reference point with the force and its moment. Points farther than the
+search distance from the rigid surface take no part until they approach. Its tests are
+``edelweissmeshfree/constraints/test/particlefacerigidcontact_test.py`` (the force and the moment of a pressed face,
+action = reaction, the tangent by central differences against a moved and rotated body, a particle that approaches).
+The particle constraints for analytical surfaces above (``ParticlePenaltyRigidBodyContact``, with an implicit function)
+remain the way to describe a boundary by a formula rather than by a mesh.
+
 .. automodule:: edelweissmeshfree.constraints.base.contactpointsonparticlefaces
    :members:
