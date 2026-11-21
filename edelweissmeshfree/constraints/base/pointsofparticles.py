@@ -41,7 +41,8 @@ of the particle's kernel functions, which change as the particle moves. Its bloc
 the particle moves the point, :math:`G_B`
 (:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getAttachedPointInterpolationVector`), the
 transpose of the point's motion, so that a penalty on the point has a symmetric stiffness and does no work over a
-closed cycle (:func:`addForcesOnPointsOfParticle`). The constraints of
+closed cycle (:func:`addForcesOnPointsOfParticle`); the explicit solver bounds that stiffness for its critical time
+step (:func:`addBoundOfAbsoluteStiffnessOfPointsOfParticle`). The constraints of
 :mod:`edelweissmeshfree.constraints.explicit` and
 :class:`~edelweissmeshfree.constraints.particlepenaltyweakdirichtlet.ParticlePenaltyWeakDirichlet` use both; a new one
 is then its physics -- the gap, the pairing, the force -- and a constructor.
@@ -103,3 +104,42 @@ def addForcesOnPointsOfParticle(
         PAtNodes[localNodes] -= G.T @ forces
     else:
         PAtNodes[np.ix_(localNodes, components)] -= G.T @ forces
+
+
+def addBoundOfAbsoluteStiffnessOfPointsOfParticle(
+    boundAtNodes: np.ndarray,
+    localNodes: np.ndarray,
+    G: np.ndarray,
+    directions: np.ndarray,
+    stiffness: np.ndarray,
+    weightsAtNodes: np.ndarray,
+):
+    """Add the row sums of the absolute value of the stiffness of penalty springs on points of one particle, weighted
+    by column (see :meth:`~edelweissfe.constraints.base.constraintbase.ConstraintBase.computeBoundOfAbsoluteStiffnessTimes`).
+    A spring of stiffness :math:`k_p` on the point :math:`p` along the unit direction :math:`\\boldsymbol{n}_p` has the
+    stiffness :math:`k_p\\, \\boldsymbol{w}_p \\otimes \\boldsymbol{w}_p` with :math:`\\boldsymbol{w}_p = G_p
+    \\otimes \\boldsymbol{n}_p`, so
+
+    .. math::
+
+        b_{Bi} \\mathrel{+}= \\sum_p k_p\\, |G_{pB}|\\, |n_{pi}| \\sum_{C,j} |G_{pC}|\\, |n_{pj}|\\, w_{Cj} .
+
+    Parameters
+    ----------
+    boundAtNodes
+        The row sums of the constraint, node by node: ``nNodes x fieldSize``; augmented.
+    localNodes
+        Where the nodes of the particle's kernel functions sit in the block (:func:`locateTheNodesOfParticles`).
+    G
+        The interpolation vectors of the points, one row per point: ``nPoints x nNodesOfTheParticle``.
+    directions
+        The unit direction of each spring: ``nPoints x fieldSize``.
+    stiffness
+        The stiffness of each spring.
+    weightsAtNodes
+        The weights of the columns, node by node: ``nNodes x fieldSize``.
+    """
+
+    absoluteG, absoluteDirections = np.abs(G), np.abs(directions)
+    weightedByPoint = np.einsum("pB,Bj,pj->p", absoluteG, weightsAtNodes[localNodes], absoluteDirections)
+    boundAtNodes[localNodes] += absoluteG.T @ ((stiffness * weightedByPoint)[:, None] * absoluteDirections)

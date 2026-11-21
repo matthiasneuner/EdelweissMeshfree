@@ -2,6 +2,7 @@ import numpy as np
 from edelweissfe.config.phenomena import getFieldSize
 from edelweissfe.timesteppers.timestep import TimeStep
 from edelweissfe.variables.scalarvariable import ScalarVariable
+from scipy.sparse import csr_matrix
 
 from edelweissmeshfree.constraints.base.mpmconstraintbase import MPMConstraintBase
 from edelweissmeshfree.constraints.base.pointsofparticles import (
@@ -48,8 +49,10 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
 
     A support holds only as well as its penalty is stiff against the material next to it: a penalty that is merely
     comparable to the stiffness of a particle lets the support give way and spring back, an error that does not shrink
-    with the particle size. Its upper bound is the critical time step of the explicit integration,
-    :math:`\Delta t < 2 \sqrt{m / k}` with :math:`m` the mass a constrained point carries; see example 186.
+    with the particle size. A stiffer one costs time increments: the explicit solver adds its springs to the
+    frequencies of the nodes they hold (:meth:`computeBoundOfAbsoluteStiffnessTimes`), and a support far stiffer than
+    the particles sets the critical time step, about :math:`2 \sqrt{m / k}` with :math:`m` the mass a constrained point
+    carries; see example 186.
 
     Parameters
     ----------
@@ -98,6 +101,9 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         self._localNodesOfParticle = []
         #: Per constrained particle, its kernel functions as of the last :meth:`updateConnectivity`.
         self._kernelFunctionsOfParticle = []
+        #: Per constrained particle, the interpolation vectors of its constrained points as :meth:`computeKernelsExplicit`
+        #: last evaluated them, for the bound of the stiffness at the same positions; None after a connectivity update.
+        self._interpolationsOfTheLastEvaluation = None
         if constrain == "center":
             self._constrainVertices = None
         else:
@@ -189,6 +195,7 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             True if the nodes of the constraint changed.
         """
 
+        self._interpolationsOfTheLastEvaluation = None
         kernelFunctionsOfParticle = [particle.kernelFunctions for particle in self._constrainedParticles]
         if self._nodes and kernelFunctionsOfParticle == self._kernelFunctionsOfParticle:
             return False
@@ -257,18 +264,71 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         components = list(self._prescribedStepDelta)
         PAtNodes = P.reshape(-1, self._fieldSize)
 
+        interpolations = []
         for p, localNodes, initialCoordinates in zip(
             self._constrainedParticles, self._localNodesOfParticle, self._initialCoordinatesOfConstrainedPoints
         ):
             coordinates = self._constrainedCoordinatesOf(p)
             # one row per constrained point: the interpolation vector with which the particle moves it
             G = np.array([p.getAttachedPointInterpolationVector(x) for x in coordinates])
+            interpolations.append(G)
             # the forces that pull the constrained components of the points back to their initial positions
             forces = -self._penaltyParameter * (coordinates[:, components] - initialCoordinates[:, components])
             addForcesOnPointsOfParticle(PAtNodes, localNodes, G, forces, components)
+        self._interpolationsOfTheLastEvaluation = interpolations
 
         for i in self._prescribedStepDelta:
             self.penaltyForce[i] = np.sum(P[i :: self._fieldSize])
+
+    def computeBoundOfAbsoluteStiffnessTimes(
+        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+    ):
+        """Add the row sums of the absolute value of the stiffness of the support in an explicit analysis, weighted by
+        column: a spring of the penalty stiffness :math:`k` on every constrained component :math:`i` of every
+        constrained point :math:`p`, moved by its interpolation vector :math:`\\boldsymbol{G}_p`, as in
+        :meth:`computeKernelsExplicit`, so :math:`b_{Bi} \\mathrel{+}= k \\sum_p |G_{pB}| \\sum_C |G_{pC}|\\, w_{Ci}`:
+        two products with the matrix :math:`|\\boldsymbol{G}|` of all points per component. The interpolation vectors
+        are those of the last evaluation of the force, at the same positions, if there was one since the connectivity
+        was updated.
+
+        Parameters
+        ----------
+        U_np
+            The current solution; unused.
+        dU
+            The solution increment; unused.
+        weights
+            The weight of each column.
+        bound
+            The row sums to augment.
+        timeStep
+            The current time step; unused.
+        """
+
+        interpolations = self._interpolationsOfTheLastEvaluation
+        if interpolations is None:
+            interpolations = [
+                np.array([p.getAttachedPointInterpolationVector(x) for x in self._constrainedCoordinatesOf(p)])
+                for p in self._constrainedParticles
+            ]
+        if not interpolations:
+            return
+
+        # all points of all particles, one row each, over the nodes of the constraint
+        nPointsOf = [len(G) for G in interpolations]
+        absoluteG = csr_matrix(
+            (
+                np.abs(np.concatenate([G.ravel() for G in interpolations])),
+                np.concatenate(
+                    [np.tile(nodes, len(G)) for nodes, G in zip(self._localNodesOfParticle, interpolations)]
+                ),
+                np.concatenate(([0], np.cumsum(np.repeat([len(n) for n in self._localNodesOfParticle], nPointsOf)))),
+            ),
+            shape=(sum(nPointsOf), len(self._nodes)),
+        )
+        weightsAtNodes, boundAtNodes = weights.reshape(-1, self._fieldSize), bound.reshape(-1, self._fieldSize)
+        for i in self._prescribedStepDelta:
+            boundAtNodes[:, i] += self._penaltyParameter * (absoluteG.T @ (absoluteG @ weightsAtNodes[:, i]))
 
     def _constrainedCoordinatesOf(self, particle: BaseParticle) -> np.ndarray:
         """The current coordinates of the constrained points of a particle: its center, or the constrained vertices.

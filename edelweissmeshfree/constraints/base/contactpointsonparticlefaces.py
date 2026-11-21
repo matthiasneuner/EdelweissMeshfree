@@ -313,6 +313,19 @@ class ContactPointsOnParticleFaces(ContactPoints):
         forces[closed] = normalForces[:, None] * normals
         P.reshape((-1, self.nDim))[:] += self._interpolationMatrix.T @ forces
 
+    def interpolationMatrixOfLocatedPoints(self) -> csr_matrix:
+        """The sparse matrix :math:`C` of the interpolation vectors :math:`G(\\boldsymbol{x}_q)` of the located points
+        over the nodes of the kernel functions of their particles, made when they were located; see
+        :meth:`~edelweissfe.constraints.base.contactpoints.ContactPoints.interpolationMatrixOfLocatedPoints`.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+            The matrix.
+        """
+
+        return self._interpolationMatrix
+
     def interpolationOfLocatedPoint(self, k: int) -> tuple[np.ndarray, np.ndarray]:
         """The degrees of freedom of the nodes of the kernel functions of a located point's particle, and its
         interpolation vector :math:`G(\\boldsymbol{x}_q)` over them.
