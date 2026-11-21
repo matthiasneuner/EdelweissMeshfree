@@ -219,6 +219,8 @@ cdef class MarmotParticleWrapper:
 
     cdef list[MarmotMeshfreeKernelFunctionWrapper] _assignedKernelFunctions
     cdef list _nodes
+    # the Marmot kernel functions of _assignedKernelFunctions, kept for updateShapeFunctions()
+    cdef vector[const MarmotMeshfreeKernelFunction*] _marmotKernelFunctions
 
     cdef dict _supportedBodyLoads
 
