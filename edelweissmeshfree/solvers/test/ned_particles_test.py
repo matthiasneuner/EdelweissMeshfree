@@ -43,6 +43,7 @@ from edelweissfe.journal.journal import Journal
 from edelweissfe.models.change import Change
 from edelweissfe.outputmanagers.restart import OutputManager as RestartOutputManager
 from edelweissfe.outputmanagers.restart import RestartOutputManagerSchema
+from edelweissfe.solvers.base.criticaltimestep import CriticalTimeStepBoundOfEachDof
 from edelweissfe.solvers.nonlinearexplicitdynamic import NED
 from edelweissfe.steps.adaptivestepforexplicitsimulations import (
     AdaptiveStepForExplicitSimulations,
@@ -107,13 +108,19 @@ NED_OPTIONS = {"output-frequency": 1}
 ESTIMATE_OF_THE_PARTICLES = MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia
 
 
+def _estimateOf(value: float):
+    """A stand-in for the particles' estimate that gives the critical time step ``value``, whatever their state."""
+
+    return lambda *args: CriticalTimeStepBoundOfEachDof(value, np.zeros(0, dtype=int), np.zeros(0))
+
+
 @pytest.fixture(autouse=True)
 def _theIncrementsOfTheStepAreTakenAsTheyAre(monkeypatch):
     """The particles' critical time step is replaced by an infinite one, so that the increments are the step's: these
     tests follow the discrete system and the state the increments carry at a given increment, not the stability of the
     body, whose critical time step falls as it stretches. The tests of the critical time step set their own."""
 
-    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", lambda *args: np.inf)
+    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", _estimateOf(np.inf))
 
 
 def _ned(journal: Journal) -> NED:
@@ -552,7 +559,7 @@ def test_with_any_margin_the_particles_are_estimated_in_the_zero_increment_after
     together with a new numbering; a gain on the same numbering is tested on the policy itself (EdelweissFE,
     ``tests/test_critical_time_step.py``)."""
 
-    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", lambda *args: np.inf)
+    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", _estimateOf(np.inf))
     journal = Journal()
     solver = _SolverRecordingTheEstimates(journal)
     _solve(_translatingBody(journal), journal, [solver], [N_INCREMENTS])
@@ -579,7 +586,7 @@ def test_the_particles_are_estimated_in_every_increment_where_they_set_the_time_
     monkeypatch.setattr(
         MPMDiscreteSystem,
         "criticalTimeStepOfEntitiesWithOwnInertia",
-        lambda *args: 0.5 * TIME_INCREMENT / courantNumber,
+        _estimateOf(0.5 * TIME_INCREMENT / courantNumber),
     )
     journal = Journal()
     solver = _SolverRecordingTheEstimates(journal, **{"courant-number": courantNumber})
@@ -598,7 +605,7 @@ def test_where_the_particles_have_a_margin_they_are_estimated_when_their_masses_
 
     courantNumber, delta, margin = 0.8, 0.1, 1.6
     value = margin * TIME_INCREMENT / courantNumber
-    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", lambda *args: value)
+    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", _estimateOf(value))
     journal = Journal()
     solver = _SolverRecordingTheEstimates(
         journal, **{"courant-number": courantNumber, "critical-time-step-decrease-per-increment": delta}
@@ -640,7 +647,7 @@ def test_the_time_increment_never_exceeds_the_courant_fraction_of_a_fresh_estima
             super().acceptIncrement(step, model, timeStep)
             fresh = ESTIMATE_OF_THE_PARTICLES(
                 self.system, self._inertiaOfEntities, self._dampingOfEntities, self.forEachChunk
-            )
+            ).value
             self.increments[-1]["fresh"] = fresh
 
     solver = _SolverCheckingTheTimeIncrement(journal, **{"courant-number": courantNumber})

@@ -10,6 +10,7 @@ from edelweissmeshfree.constraints.base.mpmexplicitconstraintbase import (
     MPMExplicitConstraintBase,
 )
 from edelweissmeshfree.constraints.base.pointsofparticles import (
+    addBoundOfAbsoluteStiffnessOfPointsOfParticle,
     addForcesOnPointsOfParticle,
     locateTheNodesOfParticles,
 )
@@ -199,6 +200,48 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
                 total_reaction += self._penaltyParameter * g
 
         self.reactionForce = total_reaction
+
+    def computeBoundOfAbsoluteStiffnessTimes(
+        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+    ):
+        """Add the row sums of the absolute value of the stiffness of the penalty, weighted by column: a spring of the
+        penalty stiffness along the surface normal at every point inside the surface, moved by the interpolation vector
+        of the point, as in :meth:`computeKernelsExplicit` (see
+        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
+
+        Parameters
+        ----------
+        U_np
+            The current solution; unused.
+        dU
+            The solution increment; unused.
+        weights
+            The weight of each column.
+        bound
+            The row sums to augment.
+        timeStep
+            The current time step; unused.
+        """
+
+        inside = [p for p in self._constrained_points if self._implicit_function(p) < 0]
+        if not inside:
+            return
+
+        G = np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in inside])
+        directions = np.zeros((len(inside), self._domainSize))
+        for row, p in enumerate(inside):
+            gradient = self._gradient_function(p)
+            norm = np.linalg.norm(gradient)
+            if norm > 1e-14:
+                directions[row] = gradient / norm
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
+            bound.reshape(-1, self._fieldSize),
+            self._localNodes,
+            G,
+            directions,
+            np.full(len(inside), self._penaltyParameter),
+            weights.reshape(-1, self._fieldSize),
+        )
 
 
 def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(

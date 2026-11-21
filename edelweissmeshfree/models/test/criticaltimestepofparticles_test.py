@@ -94,7 +94,75 @@ def test_the_bound_is_stable_and_within_a_factor_of_the_stable_increment(particl
         system.assembleLumpedMassOfEntitiesWithOwnInertia(serially),
         system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially),
         serially,
-    )
+    ).value
 
     assert _isStable(particlePlate(particleType, supportFactor, kernelOrder), bound)
     assert not _isStable(particlePlate(particleType, supportFactor, kernelOrder), 2.0 * bound)
+
+
+@pytest.mark.parametrize("penalty", [1e3, 1e5, 1e7])
+def test_the_rows_of_a_penalty_support_added_to_the_particles_bound_the_exact_eigenvalue(penalty):
+    """A support held by a penalty on the left edge of the plate
+    (:class:`~edelweissmeshfree.constraints.particlepenaltyweakdirichtlet.ParticlePenaltyWeakDirichlet`): the row sums
+    of its mass-scaled stiffness, added to the particles' rows inside their field matrix
+    (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`), bound the largest
+    eigenvalue of the particles' tangent with the support's springs, from a support softer than the particles, which
+    leaves their estimate as it is, to one far stiffer, which sets it."""
+
+    from edelweissmeshfree.constraints.particlepenaltyweakdirichtlet import (
+        ParticlePenaltyWeakDirichlet,
+    )
+    from edelweissmeshfree.models.mpmdiscretesystem import (
+        STABLE_FRACTION_OF_THE_TANGENT_LIMIT,
+    )
+
+    model = particlePlate("DisplacementSQCNIxNSNI/PlaneStrain/Quad", 2.2, 3)
+    leftColumn = [p for p in model.particles.values() if p.getCenterCoordinates()[0] < 10.0]
+    support = ParticlePenaltyWeakDirichlet("support", model, leftColumn, "displacement", {0: 0.0}, penalty, [0, 3])
+    model.constraints["support"] = support
+    model.updateConnectivity()
+    system = model.buildDiscreteSystem()
+
+    def serially(entities, work):
+        work(entities)
+
+    M = np.asarray(system.assembleLumpedMassOfEntitiesWithOwnInertia(serially))
+    C = np.asarray(system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially))
+    withMass = M > 0.0
+    s = np.zeros_like(M)
+    s[withMass] = 1.0 / np.sqrt(M[withMass])
+
+    # the exact stiffness: the particles' tangents and the support's springs k G G^T on the held component
+    K = np.zeros((len(M), len(M)))
+    for particle in system.particles:
+        tangent = np.zeros(particle.nDof**2)
+        particle.computeTangentOfTheCurrentState(tangent)
+        indices = np.asarray(system.locations.ofEntity[particle])
+        K[np.ix_(indices, indices)] += tangent.reshape(particle.nDof, particle.nDof, order="F")
+    ofTheParticles = K.copy()
+    indices = np.asarray(system.locations[support])
+    for particle, localNodes in zip(leftColumn, support._localNodesOfParticle):
+        for x in particle.getVertexCoordinates()[[0, 3]]:
+            G = particle.getAttachedPointInterpolationVector(x).ravel()
+            dofs = indices[2 * localNodes]
+            K[np.ix_(dofs, dofs)] += penalty * np.outer(G, G)
+
+    def exact(stiffness):
+        S = s[withMass, None] * stiffness[np.ix_(withMass, withMass)] * s[None, withMass]
+        return 2.0 / np.sqrt(np.max(np.abs(np.linalg.eigvals(S))))
+
+    bound = np.zeros(support.nDof)
+    support.computeBoundOfAbsoluteStiffnessTimes(None, None, s[indices], bound, None)
+    rowSums = np.zeros_like(M)
+    np.add.at(rowSums, indices, bound)
+    rowSums *= s
+
+    estimate = system.criticalTimeStepOfEntitiesWithOwnInertia(M, C, serially)
+    withTheSupport = estimate.criticalTimeStep(rowSums) / STABLE_FRACTION_OF_THE_TANGENT_LIMIT
+    alone = estimate.value / STABLE_FRACTION_OF_THE_TANGENT_LIMIT
+
+    assert alone <= exact(ofTheParticles)
+    assert withTheSupport <= exact(K)
+    assert withTheSupport > 0.25 * exact(K)
+    if exact(K) < 0.5 * exact(ofTheParticles):
+        assert withTheSupport < alone, "a support that sets the critical time step lowers the estimate"

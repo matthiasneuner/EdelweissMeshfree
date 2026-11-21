@@ -10,6 +10,7 @@ from edelweissmeshfree.constraints.base.mpmexplicitconstraintbase import (
     MPMExplicitConstraintBase,
 )
 from edelweissmeshfree.constraints.base.pointsofparticles import (
+    addBoundOfAbsoluteStiffnessOfPointsOfParticle,
     addForcesOnPointsOfParticle,
     locateTheNodesOfParticles,
 )
@@ -238,6 +239,47 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
                 total_penalty_force += g * penalty
 
         self.reactionForce = total_penalty_force
+
+    def computeBoundOfAbsoluteStiffnessTimes(
+        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+    ):
+        """Add the row sums of the absolute value of the stiffness of the penalty, weighted by column: a spring of the
+        penalty stiffness normal to the boundary at every point that penetrates it, moved by the interpolation vector
+        of the point, as in :meth:`computeKernelsExplicit` (see
+        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
+
+        Parameters
+        ----------
+        U_np
+            The current solution; unused.
+        dU
+            The solution increment; unused.
+        weights
+            The weight of each column.
+        bound
+            The row sums to augment.
+        timeStep
+            The current time step.
+        """
+
+        currentWallPos = self._boundaryPosition + self._velocity * timeStep.stepProgress
+        penetrating = [
+            p for p in self._constrained_points if self._orientation * (p[self._component] - currentWallPos) > 0
+        ]
+        if not penetrating:
+            return
+
+        G = np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in penetrating])
+        directions = np.zeros((len(penetrating), self._fieldSize))
+        directions[:, self._component] = 1.0
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
+            bound.reshape(-1, self._fieldSize),
+            self._localNodes,
+            G,
+            directions,
+            np.full(len(penetrating), self._penaltyParameter),
+            weights.reshape(-1, self._fieldSize),
+        )
 
 
 def ParticleExplicitPenaltyCartesianBoundaryConstraintFactory(

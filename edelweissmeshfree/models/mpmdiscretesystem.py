@@ -44,6 +44,7 @@ import numpy as np
 from edelweissfe.models.discretesystem import DiscreteSystem
 from edelweissfe.numerics.dofvector import DofVector
 from edelweissfe.sets.nodeset import NodeSet
+from edelweissfe.solvers.base.criticaltimestep import CriticalTimeStepBound
 from edelweissfe.timesteppers.timestep import TimeStep
 
 from edelweissmeshfree.numerics.doflocations import MPMDofLocations
@@ -58,6 +59,84 @@ COEFFICIENT_AT_ROUND_OFF = 1e-12
 #: is not exactly the central difference method with their tangent: measured on 2D and 3D blocks of particles (support
 #: factors 1.6 to 3.4, quadratic and cubic kernels), it was stable up to 0.875 to 0.98 of the tangent's limit.
 STABLE_FRACTION_OF_THE_TANGENT_LIMIT = 0.85
+
+
+class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
+    """The estimate of the critical time step of the particles, from the field matrix :math:`\\boldsymbol{Q}` of the
+    largest row sums of their mass-scaled stiffness per block of fields (see
+    :meth:`MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`), in the form the penalty constraints add to.
+
+    A penalty constraint acts on one field, and couples it with itself: its row sums :math:`r_i` add to the particles'
+    row sums :math:`Z_{i g}` within the field block :math:`g` of the degree of freedom :math:`i`, so the diagonal entry of
+    the field matrix becomes :math:`Q_{gg} = \\max_{i \\in g} (Z_{ig} + r_i)`, the other entries stay. The bound of the
+    field matrix then holds for the particles and the constraints together, for an unsymmetric tangent as well; where
+    the constraints raise no diagonal entry, the estimate is the particles' own.
+
+    Parameters
+    ----------
+    fieldMatrix
+        The field matrix :math:`\\boldsymbol{Q}` of the particles.
+    orderOfGroup
+        Whether each block of fields is integrated by central differences ("second") or by forward Euler ("first").
+    groupOfDof
+        The block of fields of each degree of freedom of the numbering; -1 for one of no block.
+    rowSumsInTheOwnBlock
+        The row sum :math:`Z_{i g(i)}` of each degree of freedom within its own block; zero for one of no block.
+    """
+
+    def __init__(
+        self, fieldMatrix: np.ndarray, orderOfGroup: list[str], groupOfDof: np.ndarray, rowSumsInTheOwnBlock: np.ndarray
+    ):
+        self._fieldMatrix = fieldMatrix
+        self._orderOfGroup = orderOfGroup
+        self._groupOfDof = groupOfDof
+        self._rowSumsInTheOwnBlock = rowSumsInTheOwnBlock
+        self.dofs = np.flatnonzero(groupOfDof >= 0)
+        self.value = self._criticalTimeStepOfTheFieldMatrix(fieldMatrix)
+
+    def criticalTimeStep(self, rowSumsOfThePenaltyConstraints: np.ndarray) -> float:
+        fieldMatrix = self._fieldMatrix
+        coupled = (rowSumsOfThePenaltyConstraints > 0.0) & (self._groupOfDof >= 0)
+        if not coupled.any():
+            return self.value
+
+        fieldMatrix = fieldMatrix.copy()
+        sums = self._rowSumsInTheOwnBlock[coupled] + rowSumsOfThePenaltyConstraints[coupled]
+        groups = self._groupOfDof[coupled]
+        for group in np.unique(groups):
+            fieldMatrix[group, group] = max(fieldMatrix[group, group], np.max(sums[groups == group]))
+        return self._criticalTimeStepOfTheFieldMatrix(fieldMatrix)
+
+    def _criticalTimeStepOfTheFieldMatrix(self, fieldMatrix: np.ndarray) -> float:
+        """:data:`STABLE_FRACTION_OF_THE_TANGENT_LIMIT` times the smaller of :math:`2/\\sqrt{\\rho(\\boldsymbol{Q})}` of
+        the blocks integrated by central differences and :math:`2/\\rho(\\boldsymbol{Q})` of those integrated by forward
+        Euler.
+
+        Parameters
+        ----------
+        fieldMatrix
+            The field matrix.
+
+        Returns
+        -------
+        float
+            The critical time step.
+        """
+
+        def perronRoot(order: str) -> float:
+            """The largest eigenvalue of the nonnegative field matrix of the blocks of the given order."""
+            groups = [group for group, ofGroup in enumerate(self._orderOfGroup) if ofGroup == order]
+            return float(np.max(np.abs(np.linalg.eigvals(fieldMatrix[np.ix_(groups, groups)])))) if groups else 0.0
+
+        stable = np.inf
+        omegaSquared = perronRoot("second")
+        if omegaSquared > 0.0:
+            stable = 2.0 / np.sqrt(omegaSquared)
+        rate = perronRoot("first")
+        if rate > 0.0:
+            stable = min(stable, 2.0 / rate)
+
+        return STABLE_FRACTION_OF_THE_TANGENT_LIMIT * stable
 
 
 class MPMDiscreteSystem(DiscreteSystem):
@@ -440,7 +519,7 @@ class MPMDiscreteSystem(DiscreteSystem):
         lumpedMass: DofVector,
         lumpedDamping: DofVector,
         forEachChunk: Callable[[list, Callable], None],
-    ) -> float | None:
+    ) -> CriticalTimeStepBoundOfEachFieldBlock | None:
         """An estimate of the critical time step of ``NED``'s explicit scheme for the particles, a lower bound of it, from
         their stiffness at the current state and the assembled lumped mass and damping; ``NED`` decides when it is taken
         anew (:class:`~edelweissfe.solvers.base.criticaltimestep.CriticalTimeStepOfEntitiesWithOwnInertia`). No stiffness is assembled: every particle bounds
@@ -500,6 +579,9 @@ class MPMDiscreteSystem(DiscreteSystem):
         The result is scaled by :data:`STABLE_FRACTION_OF_THE_TANGENT_LIMIT`, since the explicit scheme of the
         particles is not exactly integrated with their tangent: their NSNI stabilization acts on the increment.
 
+        It is returned with the field matrix and the row sums of every degree of freedom in its own block, to which the
+        row sums of penalty constraints add (:class:`CriticalTimeStepBoundOfEachFieldBlock`).
+
         Parameters
         ----------
         lumpedMass
@@ -512,8 +594,8 @@ class MPMDiscreteSystem(DiscreteSystem):
 
         Returns
         -------
-        float | None
-            The critical time step; None if the model has no particles.
+        CriticalTimeStepBoundOfEachFieldBlock | None
+            The estimate, its critical time step its ``value``; None if the model has no particles.
         """
 
         if not self.particles:
@@ -568,20 +650,11 @@ class MPMDiscreteSystem(DiscreteSystem):
 
         Q = np.array([[np.max(Z[groupOfDof == g, f]) for f in range(nGroups)] for g in range(nGroups)])
 
-        def perronRoot(order: str) -> float:
-            """The largest eigenvalue of the nonnegative field matrix of the blocks of the given order."""
-            groups = [group for group, ofGroup in enumerate(orderOfGroup) if ofGroup == order]
-            return float(np.max(np.abs(np.linalg.eigvals(Q[np.ix_(groups, groups)])))) if groups else 0.0
+        inAGroup = groupOfDof >= 0
+        rowSumsInTheOwnBlock = np.zeros(nDof)
+        rowSumsInTheOwnBlock[inAGroup] = Z[inAGroup, groupOfDof[inAGroup]]
 
-        stable = np.inf
-        omegaSquared = perronRoot("second")
-        if omegaSquared > 0.0:
-            stable = 2.0 / np.sqrt(omegaSquared)
-        rate = perronRoot("first")
-        if rate > 0.0:
-            stable = min(stable, 2.0 / rate)
-
-        return STABLE_FRACTION_OF_THE_TANGENT_LIMIT * stable
+        return CriticalTimeStepBoundOfEachFieldBlock(Q, orderOfGroup, groupOfDof, rowSumsInTheOwnBlock)
 
     def carriersOfTheMotion(self) -> set[str]:
         """Where the model holds the motion of its particles; see

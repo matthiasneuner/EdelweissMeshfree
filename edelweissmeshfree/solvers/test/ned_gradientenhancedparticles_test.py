@@ -283,7 +283,7 @@ def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_
         system.assembleLumpedMassOfEntitiesWithOwnInertia(serially),
         system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially),
         serially,
-    )
+    ).value
 
     assert tightness * exact < bound <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
 
