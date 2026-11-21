@@ -293,25 +293,25 @@ class ContactPointsOnParticleFaces(ContactPoints):
 
         return self._coordinatesOfLocated + self._interpolationMatrix @ dU.reshape((-1, self.nDim))
 
-    def addNormalForceResidual(self, P: np.ndarray, closed: np.ndarray, normalForces: np.ndarray, normals: np.ndarray):
-        """Add :math:`C^T (f_n\\, \\boldsymbol{n})`: the normal forces of the closed points, distributed over the nodes
-        of the kernel functions of their particles with their interpolation vectors.
+    def addForceResidual(self, P: np.ndarray, points: np.ndarray, forces: np.ndarray, directions: np.ndarray):
+        """Add :math:`C^T (f\\, \\boldsymbol{n})`: the forces of the springs at the given points, distributed over the
+        nodes of the kernel functions of their particles with their interpolation vectors.
 
         Parameters
         ----------
         P
             The slave part of the residual contribution; augmented.
-        closed
+        points
             The located points that carry a force.
-        normalForces
-            Their normal forces.
-        normals
-            Their unit normals.
+        forces
+            The forces of their springs.
+        directions
+            The unit directions of their springs.
         """
 
-        forces = np.zeros((self._interpolationMatrix.shape[0], self.nDim))
-        forces[closed] = normalForces[:, None] * normals
-        P.reshape((-1, self.nDim))[:] += self._interpolationMatrix.T @ forces
+        forcesOnPoints = np.zeros((self._interpolationMatrix.shape[0], self.nDim))
+        forcesOnPoints[points] = forces[:, None] * directions
+        P.reshape((-1, self.nDim))[:] += self._interpolationMatrix.T @ forcesOnPoints
 
     def interpolationMatrixOfLocatedPoints(self) -> csr_matrix:
         """The sparse matrix :math:`C` of the interpolation vectors :math:`G(\\boldsymbol{x}_q)` of the located points
