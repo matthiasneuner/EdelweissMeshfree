@@ -286,6 +286,7 @@ def test_an_adjusted_overlap_at_the_first_update_is_the_state_at_rest():
     checkpointed = _contact(model, particles, master, nQuadraturePoints=2, initialOverlap="adjust")
     restored = _contact(model, particles, master, nQuadraturePoints=2, initialOverlap="adjust", searchDistance=1e-9)
     restored.setRestartData(checkpointed.getRestartData())
+    restored.updateConnectivity(model)  # locates the restored points; not the first search: nothing recorded anew
     np.testing.assert_array_equal(restored._initialOverlap, checkpointed._initialOverlap)
     np.testing.assert_array_equal(residualAfter(restored, np.array([0.0, -0.01]))[0], residuals["adjust", (0.0, -0.01)])
 
@@ -366,6 +367,10 @@ def test_a_point_that_leaves_is_released_and_out_of_reach_takes_the_constraint_o
 
 
 def test_the_restart_continues_the_pairing():
+    """A contact restored from a checkpoint continues the pairing: a point in contact stays in contact, also when the
+    search distance would not find it anew. The checkpoint is read before the particles are connected to their kernel
+    functions (a resumed run connects them at its first update of the connectivity), so the points are located then."""
+
     model = MPMModel(2)
     master = _masterBlock(model, JournalStandIn())
     particle = _particle(0.3, -0.01)
@@ -374,7 +379,12 @@ def test_the_restart_continues_the_pairing():
 
     restored = _contact(model, [particle], master, searchDistance=1e-9)
     assert restored.stateOfPoints[0] == ContactState.FREE
+    kernelFunctions, particle.kernelFunctions = particle.kernelFunctions, None
     restored.setRestartData(contact.getRestartData())
+    assert restored.stateOfPoints[0] == ContactState.IN_CONTACT
+
+    particle.kernelFunctions = kernelFunctions
+    restored.updateConnectivity(model)
     assert restored.stateOfPoints[0] == ContactState.IN_CONTACT
     np.testing.assert_array_equal(_residual(restored), forces)
 

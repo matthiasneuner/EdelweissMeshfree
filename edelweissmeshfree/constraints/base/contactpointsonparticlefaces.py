@@ -33,9 +33,10 @@
 #  The full text of the license can be found in the file LICENSE.md at
 #  the top level directory of EdelweissMeshfree.
 #  ---------------------------------------------------------------------
-"""The contact points of particles: quadrature points on the faces of particles at the boundary of a body, for the one
-contact constraint of EdelweissFE (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`), which pairs
-them with a master surface of finite element faces.
+"""The contact points of particles: quadrature points on the faces of particles at the boundary of a body, for the
+contact constraints of EdelweissFE, which pair them with a master surface of finite element faces
+(:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`) or with a discrete rigid body
+(:mod:`edelweissfe.constraints.surfacetodiscreterigidbodypenalty`).
 
 A face of a particle moves with its particle: the particle moves every point attached to it, a vertex or a point on a
 face, by :math:`\\Delta\\boldsymbol{x} = \\sum_B G_B(\\boldsymbol{x}) \\Delta\\boldsymbol{U}_B`, with the
@@ -120,6 +121,10 @@ class ContactPointsOnParticleFaces(ContactPoints):
     nQuadraturePoints
         The number of quadrature points per face: 1 (the face's center) or 2 in 2D, 1 or 4 (2 x 2) in 3D.
     """
+
+    #: The points are located on the kernel functions of their particles, which the model connects at an update of the
+    #: connectivity (and a checkpoint does not hold).
+    locatedOnlyWhenConnected = True
 
     def __init__(self, faces: dict | Iterable, nQuadraturePoints: int = 1):
         pairs = (
