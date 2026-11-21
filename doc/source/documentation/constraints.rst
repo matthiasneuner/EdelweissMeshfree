@@ -206,7 +206,10 @@ kind of contact point*). The contact points of particles are quadrature points o
 particles, as the generators and the side sets of an Exodus mesh make them, or (particle, face) pairs -- each moving
 with the interpolation vector :math:`\mathbf{G}` of an attached point and standing for its share of the face, so the
 penalty is a stiffness per unit area, as for finite elements. The master is the faceted boundary of the finite
-elements, which EdelweissFE's surface element generator creates. The contact acts in implicit and explicit analyses;
+elements, which EdelweissFE's surface element generator creates; it may have corners, convex and re-entrant, such as
+the crests and roots of a thread (EdelweissFE's contact theory, *Corners of the master*), and an overlap at the start,
+such as a groove cut smaller than the thread, can be pushed apart over a time (*An initial overlap*). The contact acts
+in implicit and explicit analyses;
 its tests are ``edelweissmeshfree/constraints/test/particlefacecontact_test.py`` (the force of a pressed face, the
 tangent by central differences, pairing, entering, tunnelling, restart) and examples 185 (the same result as an
 analytic wall), 187 (impact of particles and of finite elements on finite elements), 191

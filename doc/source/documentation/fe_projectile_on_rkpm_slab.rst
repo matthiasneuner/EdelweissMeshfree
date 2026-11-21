@@ -110,8 +110,10 @@ reach: every point within the search distance is searched in every increment), t
 which the projectile meets as it penetrates; the master is the faceted surface. It is the contact constraint that
 couples two bodies of finite elements, with the particles' own contact points: each moves with its particle and
 stands for its share of the face. The constraint pairs a point with a facet while the point approaches, pushes it
-back out once it has entered -- never through a facet that faces against the way it came -- and lets it slide from
-facet to facet; a point found inside without having been seen approaching gets no force and is reported. The force
+back out once it has entered -- never across a convex edge of the projectile, onto the side of the nose it entered
+next to -- and lets it slide from facet to facet; a point that flows past the nose's edge, beside the projectile, is
+released. At the edges, the gap is the distance to the edge (EdelweissFE's contact theory, *Corners of the master*).
+A point found inside without having been seen approaching gets no force and is reported. The force
 on the particles and the reaction on the projectile's nodes are equal and opposite. See the documentation of the
 constraint for the gap, the pairing and what it reports.
 
