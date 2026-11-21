@@ -209,7 +209,10 @@ penalty is a stiffness per unit area, as for finite elements. The master is the 
 elements, which EdelweissFE's surface element generator creates. The contact acts in implicit and explicit analyses;
 its tests are ``edelweissmeshfree/constraints/test/particlefacecontact_test.py`` (the force of a pressed face, the
 tangent by central differences, pairing, entering, tunnelling, restart) and examples 185 (the same result as an
-analytic wall), 187 (impact of particles and of finite elements on finite elements) and 191 (:doc:`fe_projectile_on_rkpm_slab`).
+analytic wall), 187 (impact of particles and of finite elements on finite elements), 191
+(:doc:`fe_projectile_on_rkpm_slab`), 192 (the contact patch test, implicit: the pressure a block of particles transmits
+between two platens of finite elements, against a block of finite elements) and 193 (a toy pull-out: the head of a stud
+of finite elements bearing on particles, implicit).
 
 .. automodule:: edelweissmeshfree.constraints.base.contactpointsonparticlefaces
    :members:
