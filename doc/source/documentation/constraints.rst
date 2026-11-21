@@ -228,8 +228,8 @@ a column of particles between two blocks of elements, stretched and sheared, wit
 195 (a pulse through a bar of elements with a tied segment of particles, explicit, against the bar of elements alone).
 Two things to know: the traction of a tie at a single point of particles follows the particles' small deviations from
 the exact displacement, magnified by the stiff springs -- its resultant over a few particles is the reliable measure;
-and the springs' stiffness raises the frequencies of the points they hold, so an explicit analysis needs a time
-increment for it (example 195 sets the Courant number).
+and the springs' stiffness raises the frequencies of the points they hold, which ``NED``'s critical time step counts
+(its springs along the axes, like the contact's normal spring; :doc:`choosing_a_solver`).
 
 .. automodule:: edelweissmeshfree.constraints.base.contactpointsonparticlefaces
    :members:

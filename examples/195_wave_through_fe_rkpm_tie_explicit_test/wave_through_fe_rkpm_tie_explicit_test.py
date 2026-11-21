@@ -55,7 +55,11 @@ A tie of the stiffness ``k`` per unit area between two equal bars of the impedan
 wave of the circular frequency ``omega`` with the amplitude ``R = omega Z / sqrt((omega Z)^2 + 4 k^2)``, about
 ``omega Z / (2 k)``: a soft tie reflects, a stiff one lets the wave through. Its stiffness is limited by the time step,
 though: a spring as stiff as the material over the size of a particle, ``E / h``, is as stiff as a particle itself.
-The time increment is therefore set here (the Courant number) for the stiffness of the tie.
+``NED``'s critical time step counts the springs of the ties with the elements and particles they join (EdelweissFE's
+theory page "The critical time step of an explicit analysis", "Penalty constraints"), so the time increment follows
+the stiffness of the tie without a setting here. The bar of finite elements alone is then run with the time increment
+of the bar it is compared with: the central difference carries the pulse with a dispersion that depends on the time
+increment, and only the ties are to differ.
 
 What it checks: the pulse that a bar with a tied segment reflects at the probe in front of the first tie, and the
 pulse it transmits to the probe behind the second one, compared with the bar of finite elements alone. A segment of
@@ -127,8 +131,8 @@ U0, T = 1e-3, 50.0 / C
 PROBES = (60.0, 200.0)
 #: The time the test runs: until the pulse reflected at the free end comes back to the second probe.
 END_TIME = (2 * LENGTH - PROBES[1]) / C
-#: The stiffness of the ties per unit area, in units of E / SIZE, and the Courant number that keeps them stable.
-STIFFNESS, COURANT_NUMBER = 8.0, 0.3
+#: The stiffness of the ties per unit area, in units of E / SIZE.
+STIFFNESS = 8.0
 
 MATERIAL = {"name": "CompressibleNeoHooke", "properties": np.array([E / 3, E / 2, RHO])}
 
@@ -259,7 +263,7 @@ class VelocityAtTheProbes(OutputManagerBase):
         pass
 
 
-def run(bar: str) -> tuple[np.ndarray, np.ndarray]:
+def run(bar: str, timeIncrement: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Send the pulse through the bar.
 
     Parameters
@@ -267,6 +271,9 @@ def run(bar: str) -> tuple[np.ndarray, np.ndarray]:
     bar
         "finite elements" (the bar of elements alone), "particles" (a segment of particles tied in its middle), or
         "tied finite elements" (a segment of elements tied in its middle).
+    timeIncrement
+        The time increment the step asks for; ``NED`` takes it where it is below the critical time step, the latter
+        otherwise. None asks for the whole step, so that the critical time step sets the increment.
 
     Returns
     -------
@@ -296,7 +303,7 @@ def run(bar: str) -> tuple[np.ndarray, np.ndarray]:
     stepActions["dirichlet"]["pulse"] = Dirichlet("pulse", end, "displacement", {2: U0}, model, journal, f_t=pulse)
 
     jobInfo = loadConfiguration({})
-    solver = NEDParallel(jobInfo, journal, **{"courant-number": COURANT_NUMBER, "output-frequency": 1})
+    solver = NEDParallel(jobInfo, journal, **{"output-frequency": 1})
     probes = VelocityAtTheProbes(model)
     fieldOutputController = MPMFieldOutputController(model, journal)
     fieldOutputController.initializeJob()
@@ -310,8 +317,8 @@ def run(bar: str) -> tuple[np.ndarray, np.ndarray]:
         [probes],
         stepActions,
         stepLength=END_TIME,
-        startInc=1.0,
-        maxInc=1.0,
+        startInc=1.0 if timeIncrement is None else timeIncrement / END_TIME,
+        maxInc=1.0 if timeIncrement is None else timeIncrement / END_TIME,
         minInc=1e-12,
         maxNumInc=10**5,
     )
@@ -320,9 +327,9 @@ def run(bar: str) -> tuple[np.ndarray, np.ndarray]:
     return np.array(probes.times), np.array(probes.velocities)
 
 
-def reflectedAndTransmitted(bar: str, reference: tuple[np.ndarray, np.ndarray]) -> dict:
-    """The pulses of a bar with a tied segment that differ from those of the bar of elements alone, at its time
-    increments: the energy of the reflected pulse (at the first probe, after the incident one has passed) and of the
+def reflectedAndTransmitted(bar: str) -> dict:
+    """The pulses of a bar with a tied segment that differ from those of the bar of elements alone, run with the same
+    time increment, at its time increments: the energy of the reflected pulse (at the first probe, after the incident one has passed) and of the
     difference of the transmitted pulse (at the second probe), each relative to the energy of the incident pulse, which
     is proportional to the integral of the squared velocity.
 
@@ -330,8 +337,6 @@ def reflectedAndTransmitted(bar: str, reference: tuple[np.ndarray, np.ndarray]) 
     ----------
     bar
         The bar with a tied segment, see :func:`run`.
-    reference
-        What :func:`run` returns for the bar of finite elements alone.
 
     Returns
     -------
@@ -340,7 +345,8 @@ def reflectedAndTransmitted(bar: str, reference: tuple[np.ndarray, np.ndarray]) 
     """
 
     times, velocities = run(bar)
-    referenceTimes, referenceVelocities = reference
+    # The time increment the ties allow: every increment but the zero increment at the start and the shorter last one.
+    referenceTimes, referenceVelocities = run("finite elements", timeIncrement=np.diff(times).max())
     reference = np.column_stack([np.interp(times, referenceTimes, v) for v in referenceVelocities.T])
     difference = velocities - reference
 
@@ -375,7 +381,7 @@ def test_ties_between_finite_elements_reflect_what_their_compliance_does():
     """A segment of elements tied into the bar: the two ties reflect about what two springs of their stiffness between
     equal bars reflect, and let the rest of the pulse through unchanged."""
 
-    result = reflectedAndTransmitted("tied finite elements", run("finite elements"))
+    result = reflectedAndTransmitted("tied finite elements")
     assert result["largestVelocity"] < 1.05 * result["largestVelocityOfTheBarAlone"]  # stable
     assert 0.5 * reflectionOfATie() < result["reflected"] < 4 * reflectionOfATie()
     assert result["transmitted"] == pytest.approx(1.0, abs=4 * reflectionOfATie())
@@ -387,8 +393,7 @@ def test_ties_between_particles_and_finite_elements_let_the_pulse_through():
     particles carry a wave a little differently from the elements), and transmits nearly all of it; both differences
     shrink with the size of the particles and elements."""
 
-    reference = run("finite elements")
-    result = reflectedAndTransmitted("particles", reference)
+    result = reflectedAndTransmitted("particles")
     assert result["largestVelocity"] < 1.05 * result["largestVelocityOfTheBarAlone"]  # stable
     assert result["reflected"] < 0.01
     assert result["transmitted"] == pytest.approx(1.0, abs=0.03)
@@ -396,7 +401,6 @@ def test_ties_between_particles_and_finite_elements_let_the_pulse_through():
 
 
 if __name__ == "__main__":
-    reference = run("finite elements")
     print(f"one tie reflects {reflectionOfATie():.3e}")
     for bar in ("tied finite elements", "particles"):
-        print(bar, reflectedAndTransmitted(bar, reference))
+        print(bar, reflectedAndTransmitted(bar))
