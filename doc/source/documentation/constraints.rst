@@ -207,11 +207,15 @@ particles, as the generators and the side sets of an Exodus mesh make them, or (
 with the interpolation vector :math:`\mathbf{G}` of an attached point and standing for its share of the face, so the
 penalty is a stiffness per unit area, as for finite elements. The master is the faceted boundary of the finite
 elements, which EdelweissFE's surface element generator creates; it may have corners, convex and re-entrant, such as
-the crests and roots of a thread (EdelweissFE's contact theory, *Corners of the master*), and an overlap at the start,
-such as a groove cut smaller than the thread, can be pushed apart over a time (*An initial overlap*). The contact acts
-in implicit and explicit analyses;
+the crests and roots of a thread (EdelweissFE's contact theory, *Corners of the master*). An overlap at the start is
+either real, such as a groove cut smaller than the thread, and pushed apart, at once or over a time
+(``initialOverlap=pushApart``, the default), or an error of the geometry, and adjusted: kept as the stress-free state
+(``initialOverlap=adjust``; *An initial overlap*). The flat faces of particles in the curved hole of a screw are the
+second kind: they are chords of the screw's arcs and lie inside the screw by their sag, although the concrete fits the
+screw it was cut by. The contact acts in implicit and explicit analyses;
 its tests are ``edelweissmeshfree/constraints/test/particlefacecontact_test.py`` (the force of a pressed face, the
-tangent by central differences, pairing, entering, tunnelling, restart) and examples 185 (the same result as an
+tangent by central differences, pairing, entering, tunnelling, an overlap at the start ramped out or adjusted,
+restart) and examples 185 (the same result as an
 analytic wall), 187 (impact of particles and of finite elements on finite elements), 191
 (:doc:`fe_projectile_on_rkpm_slab`), 192 (the contact patch test, implicit: the pressure a block of particles transmits
 between two platens of finite elements, against a block of finite elements) and 193 (a toy pull-out: the head of a stud
