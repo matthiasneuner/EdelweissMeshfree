@@ -32,9 +32,9 @@ follows the strain.
 * With a micro-inertia, the nonlocal field is integrated by central differences, damped by its viscosity; with a
   viscosity alone, by forward Euler. ``NED`` derives this from the particles' lumped inertia and damping, in a model of
   particles alone.
-* The time increment is the bound of the particles' stable time increment, scaled by the courant number. The material
+* The time increment is the critical time step of the particles, scaled by the courant number. The material
   parameters make the nonlocal field's limit the smaller one by far, so that this is what is tested: the bound lies
-  below the exact stable increment of the particles' tangent, and the explicit scheme is stable up to that exact
+  below the exact critical time step of the particles' tangent, and the explicit scheme is stable up to that exact
   increment, whatever the damping.
 """
 
@@ -209,8 +209,8 @@ def test_the_nonlocal_field_is_integrated_by_the_particles_operators_on_their_cr
     assert "strain symmetric" in fields
     assert "displacement" in solver.secondOrderFields
 
-    # the time increment is the bound of the particles' stable time increment, scaled by the courant number
-    assert solver._criticalTimeStep == 0.5 * solver._stableTimeIncrementOfEntities
+    # the time increment is the critical time step of the particles, scaled by the courant number
+    assert solver._criticalTimeStep == 0.5 * solver._criticalTimeStepOfTheEntities.value
     assert solver.prevTimeStep.timeIncrement == pytest.approx(solver._criticalTimeStep, rel=1e-12)
 
     # the nonlocal field follows the strain of the stretching bar
@@ -220,7 +220,7 @@ def test_the_nonlocal_field_is_integrated_by_the_particles_operators_on_their_cr
 
 
 def exactStableIncrement(model: MPMModel) -> float:
-    """The stable time increment of the explicit scheme for the particles' tangent, from the eigenvalues of the
+    """The critical time step of the explicit scheme for the particles' tangent, from the eigenvalues of the
     assembled system: :math:`2/\\omega_\\mathrm{max}` of the central differences on the degrees of freedom with an
     inertia, whatever their damping, and :math:`2/\\lambda_\\mathrm{max}` of forward Euler on those with a damping
     alone."""
@@ -265,10 +265,10 @@ def isStable(model: MPMModel) -> bool:
     ids=["micro-inertia", "viscosity only"],
 )
 def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_up_to_it(nonlocalField, tightness):
-    """The bound of the particles' stable time increment lies below the exact one of their tangent, scaled by
+    """The critical time step of the particles lies below the exact one of their tangent, scaled by
     STABLE_FRACTION_OF_THE_TANGENT_LIMIT, and within a factor of it: two for the central differences, three for forward
     Euler, whose limit is inverse in the largest eigenvalue, so that the overestimate of a Gershgorin bound enters it
-    fully, not by its square root. The explicit scheme is stable just below the exact stable increment and unstable
+    fully, not by its square root. The explicit scheme is stable just below the exact critical time step and unstable
     above it: with a micro-inertia, the viscosity does not lower the limit of the central differences, since NED takes
     the damping with the mean of the velocities before and after the update."""
 
@@ -279,7 +279,7 @@ def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_
     def serially(entities, work):
         work(entities)
 
-    bound = system.stableTimeIncrementOfEntitiesWithOwnInertia(
+    bound = system.criticalTimeStepOfEntitiesWithOwnInertia(
         system.assembleLumpedMassOfEntitiesWithOwnInertia(serially),
         system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially),
         serially,

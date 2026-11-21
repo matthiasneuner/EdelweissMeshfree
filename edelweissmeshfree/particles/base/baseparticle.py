@@ -420,7 +420,7 @@ class BaseParticle(BaseNodeCouplingEntity):
         functions currently assigned, at the current state (a zero increment, evaluated on a copy of the state). The
         state variables are left unchanged; the response the material point keeps is overwritten, so in an explicit
         increment it is called after :meth:`computePhysicsKernelsExplicit`, which reads it. Without inertia. The exact stiffness, e.g. to check the bound of
-        :meth:`computeBoundOfAbsoluteStiffnessTimes` against, which the stable time increment of the particles is
+        :meth:`computeBoundOfAbsoluteStiffnessTimes` against, which the critical time step of the particles is
         bounded with.
 
         The zero increment is taken over a unit time increment, at time zero: the time increment is only positive, as a
@@ -446,9 +446,9 @@ class BaseParticle(BaseNodeCouplingEntity):
         variables unchanged and overwrites the response the material point keeps, so in an explicit increment it is
         called after :meth:`computePhysicsKernelsExplicit`, which reads it (the order of the calls: the explicit life
         cycle of a particle, see the module documentation). The stiffness itself is not assembled: the bound
-        costs as much as the nodes, the stiffness as their square. It is what the stable time increment of the
-        particles is bounded with
-        (:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.stableTimeIncrementOfEntitiesWithOwnInertia`).
+        costs as much as the nodes, the stiffness as their square. It is what the critical time step of the particles
+        is estimated with
+        (:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`).
 
         Parameters
         ----------
