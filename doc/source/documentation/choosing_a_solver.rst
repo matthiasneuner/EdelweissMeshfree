@@ -301,7 +301,13 @@ stiffness, scaled by the lumped mass, in every increment, and these are added to
 field matrix (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`): where they
 raise no diagonal entry of it, the particles' estimate stands; a support or a contact far stiffer than the particles
 sets the critical time step. The margin policy of the particles watches the estimate with the constraints of the
-current increment as well (theory page on the critical time step of EdelweissFE, "Penalty constraints").
+current increment as well (theory page on the critical time step of EdelweissFE, "Penalty constraints"). This holds for
+the particles and the constraints together, for the unsymmetric tangent of the particles as well, under two conditions:
+every constraint couples degrees of freedom of one field of the particles only (a support, a contact or a tie of the
+displacement; a penalty between two fields is not covered, and this is assumed, not checked), and, where a constraint
+also couples finite elements (a contact of faces of particles with finite elements, a tie to them), the particles take
+part in the mass-splitting argument of the elements, which needs a symmetric stiffness: there it is an assumption (the
+same theory page, "Why it is safe").
 
 What to know
 ************

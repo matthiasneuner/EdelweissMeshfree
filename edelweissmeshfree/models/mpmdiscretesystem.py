@@ -68,9 +68,17 @@ class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
 
     A penalty constraint acts on one field, and couples it with itself: its row sums :math:`r_i` add to the particles'
     row sums :math:`Z_{i g}` within the field block :math:`g` of the degree of freedom :math:`i`, so the diagonal entry of
-    the field matrix becomes :math:`Q_{gg} = \\max_{i \\in g} (Z_{ig} + r_i)`, the other entries stay. The bound of the
-    field matrix then holds for the particles and the constraints together, for an unsymmetric tangent as well; where
-    the constraints raise no diagonal entry, the estimate is the particles' own.
+    the field matrix becomes :math:`Q_{gg} = \\max_{i \\in g} (Z_{ig} + r_i)`, the other entries stay. Where the
+    constraints raise no diagonal entry, the estimate is the particles' own. The bound of the field matrix holds for the
+    particles and the constraints together, for an unsymmetric tangent as well, under two conditions:
+
+    - every constraint couples degrees of freedom of one field of the particles only (a support, a contact or a tie of
+      the displacement): a penalty that coupled two fields, e.g. the displacement with the nonlocal field, would add to
+      an off-diagonal entry of the field matrix, which this form does not hold. This is assumed, not checked;
+    - where a constraint also couples finite elements -- the contact of faces of particles with finite elements, the
+      tie of particles to finite elements --, the particles' rows enter the mass-splitting argument of the elements,
+      which needs a symmetric stiffness. That the unsymmetric particles take part in it is an assumption (theory page
+      on the critical time step of EdelweissFE, "Why it is safe").
 
     Parameters
     ----------

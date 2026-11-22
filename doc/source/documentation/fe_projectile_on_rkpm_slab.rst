@@ -121,8 +121,9 @@ constraint for the gap, the pairing and what it reports.
   it: in every increment, the stiffness of the closed points is added to the frequencies of the nodes they couple, on
   the particles' side and on the projectile's (EdelweissFE's theory page on the critical time step, "Penalty
   constraints"). A penalty far stiffer than the concrete costs time increments, not stability.
-- **The search distance** must exceed the distance a point travels towards the surface in one increment; a point in
-  contact is never lost to it. A warning in the journal says when points enter deeper than half of it.
+- **The search distance** must exceed the distance a point travels towards the surface between two updates of the
+  connectivity: a model with particles updates it in every increment (a model of finite elements alone only every
+  ``contact-update-frequency`` increments). A point in contact is never lost to it. A warning in the journal says when points enter deeper than half of it.
 
 The time increment
 ------------------
