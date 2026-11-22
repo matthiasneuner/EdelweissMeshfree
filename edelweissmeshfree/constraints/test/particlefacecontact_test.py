@@ -395,6 +395,15 @@ def test_faces_of_particles_other_than_quadrilaterals_and_hexahedra_are_refused(
         ContactPointsOnParticleFaces([(particle, 1)])
 
 
+@pytest.mark.parametrize("faceID", [0, -1, 5])
+def test_face_ids_outside_the_abaqus_numbering_are_refused(faceID):
+    """Face IDs count from 1 (Abaqus): an ID 0, from a numbering that counts from 0, must not wrap around to the last
+    face, and one beyond the last face must not reach an index error."""
+
+    with pytest.raises(ValueError, match="1 to 4"):
+        ContactPointsOnParticleFaces([(_particle(0.0, 0.0), 1), (_particle(0.0, 0.0, 2), faceID)])
+
+
 def _tie(model, particles, master, nQuadraturePoints=2, searchDistance=SEARCH):
     """The tie (``type=tied``) of the bottom faces of the particles to the master, connected."""
 

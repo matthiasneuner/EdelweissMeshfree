@@ -117,7 +117,8 @@ class ContactPointsOnParticleFaces(ContactPoints):
     ----------
     faces
         The faces: a surface of particles (face ID -> particles, e.g. from the generators of EdelweissMeshfree or from
-        the side sets of an Exodus mesh), or (particle, face ID) pairs.
+        the side sets of an Exodus mesh), or (particle, face ID) pairs. The face IDs follow the Abaqus numbering, from
+        1 (:data:`verticesOfFace`); others are refused.
     nQuadraturePoints
         The number of quadrature points per face: 1 (the face's center) or 2 in 2D, 1 or 4 (2 x 2) in 3D.
     """
@@ -148,6 +149,13 @@ class ContactPointsOnParticleFaces(ContactPoints):
             raise ValueError(
                 f"Contact points on particle faces need quadrilateral (2D) or hexahedral (3D) particles; these have "
                 f"{nVertices} vertices in {self.nDim}D."
+            )
+        nFacesOfParticle = len(verticesOfFace[nVertices])
+        outside = (self.faceIDs < 1) | (self.faceIDs > nFacesOfParticle)
+        if outside.any():
+            raise ValueError(
+                f"Particle face IDs follow the Abaqus numbering, 1 to {nFacesOfParticle} for these particles; got "
+                f"{sorted(set(self.faceIDs[outside].tolist()))}."
             )
         rules = quadratureRulesOfFace[self.nDim]
         if nQuadraturePoints not in rules:
