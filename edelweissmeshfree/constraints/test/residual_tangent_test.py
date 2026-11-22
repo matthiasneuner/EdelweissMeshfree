@@ -429,6 +429,21 @@ def _movedParticle(center) -> ParticleStandIn:
     return particle
 
 
+def assertTheBoundIsTheOneOfTheTangentOfTheTwin(explicit, implicit):
+    """The bound of the stiffness the critical time step of ``NED`` takes from an explicit constraint equals the row
+    sums of the absolute value of the tangent of its implicit twin, weighted by random columns: with one penetrating
+    point, its one spring :math:`k\\, w \\otimes w` is the tangent. A bound that took another set of points, another
+    normal or another stiffness than the force would differ."""
+
+    zero = np.zeros(implicit.nDof)
+    _, KImplicit = residualContributionAndTangent(implicit, zero, zero, TIMESTEP)
+    weights = np.random.default_rng(3).uniform(0.5, 2.0, explicit.nDof)
+    bound = np.zeros(explicit.nDof)
+    explicit.computeBoundOfAbsoluteStiffnessTimes(zero, zero, weights, bound, TIMESTEP)
+    assert bound.max() > 0.0
+    np.testing.assert_allclose(bound, np.abs(KImplicit) @ weights, rtol=1e-13)
+
+
 def test_explicit_cartesian_boundary_acts_like_the_implicit_one(model):
     """At the start of an increment (no displacement yet), the explicit penalty boundary adds the residual
     contribution its implicit counterpart adds, so it follows the same sign rule."""
@@ -452,6 +467,7 @@ def test_explicit_cartesian_boundary_acts_like_the_implicit_one(model):
 
     assert np.abs(PImplicit).max() > 0.0, "the particle must penetrate the boundary"
     np.testing.assert_allclose(PExplicit, PImplicit, rtol=1e-14)
+    assertTheBoundIsTheOneOfTheTangentOfTheTwin(explicit, implicit)
 
 
 def test_explicit_surface_contact_acts_like_the_implicit_one(model):
@@ -488,6 +504,7 @@ def test_explicit_surface_contact_acts_like_the_implicit_one(model):
 
     assert np.abs(PImplicit).max() > 0.0, "the particle must penetrate the surface"
     np.testing.assert_allclose(PExplicit, PImplicit, rtol=1e-14)
+    assertTheBoundIsTheOneOfTheTangentOfTheTwin(explicit, implicit)
 
 
 @pytest.mark.parametrize(

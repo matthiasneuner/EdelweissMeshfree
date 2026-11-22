@@ -10,6 +10,7 @@ from edelweissmeshfree.constraints.base.mpmexplicitconstraintbase import (
     MPMExplicitConstraintBase,
 )
 from edelweissmeshfree.constraints.base.pointsofparticles import (
+    SpringsOnPointsOfParticle,
     addBoundOfAbsoluteStiffnessOfPointsOfParticle,
     addForcesOnPointsOfParticle,
     locateTheNodesOfParticles,
@@ -161,9 +162,40 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
 
         return hasChanged
 
+    def _springs(self) -> SpringsOnPointsOfParticle:
+        """The penalty springs of the contact at the particle's current position: one of the penalty stiffness at every
+        constrained point inside the surface (negative signed distance :math:`d`), along the outward unit normal (the
+        normalized gradient of the signed distance; none where the gradient vanishes), pushing the point out with
+        :math:`f = k\\, |d|`. The force (:meth:`computeKernelsExplicit`) and the bound of the stiffness
+        (:meth:`computeBoundOfAbsoluteStiffnessTimes`) go through these springs.
+
+        Returns
+        -------
+        SpringsOnPointsOfParticle
+            The springs; none if no point is inside.
+        """
+
+        distances = np.array([self._implicit_function(p) for p in self._constrained_points])
+        inside = [p for p, distance in zip(self._constrained_points, distances) if distance < 0]
+        directions = np.zeros((len(inside), self._domainSize))
+        for row, p in enumerate(inside):
+            gradient = self._gradient_function(p)
+            norm = np.linalg.norm(gradient)
+            if norm > 1e-14:
+                directions[row] = gradient / norm
+        return SpringsOnPointsOfParticle(
+            # the interpolation vector with which the particle moves the point: the force is its transpose
+            np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in inside]).reshape(
+                (len(inside), len(self._localNodes))
+            ),
+            directions,
+            -self._penaltyParameter * distances[distances < 0],
+            np.full(len(inside), self._penaltyParameter),
+        )
+
     def computeKernelsExplicit(self, U_np: np.ndarray, dU: np.ndarray, P: np.ndarray, timeStep: TimeStep):
         """Add the residual contribution of the penalty forces: the negative of the forces with which the surface
-        pushes the particle back, evaluated at the particle's current position.
+        pushes the particle back, evaluated at the particle's current position (:meth:`_springs`).
 
         Parameters
         ----------
@@ -174,39 +206,23 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         P
             The residual contribution to augment.
         timeStep
-            The current time step information (not used in this constraint but included for interface consistency).
+            The current time step; unused.
         """
 
-        total_reaction = 0.0
-
-        for p_coord in self._constrained_points:
-            dist = self._implicit_function(p_coord)
-
-            if dist < 0:
-                g = abs(dist)
-                grad = self._gradient_function(p_coord)
-                grad_norm = np.linalg.norm(grad)
-
-                normal = grad / grad_norm if grad_norm > 1e-14 else np.zeros(self._domainSize)
-
-                force_vector = self._penaltyParameter * g * normal
-
-                # the interpolation vector with which the particle moves the point: the force is its transpose
-                G = self._particle.getAttachedPointInterpolationVector(p_coord).flatten()
-                addForcesOnPointsOfParticle(
-                    P.reshape(-1, self._fieldSize), self._localNodes, G[np.newaxis, :], force_vector[np.newaxis, :]
-                )
-
-                total_reaction += self._penaltyParameter * g
-
-        self.reactionForce = total_reaction
+        springs = self._springs()
+        addForcesOnPointsOfParticle(
+            P.reshape(-1, self._fieldSize),
+            self._localNodes,
+            springs.interpolations,
+            springs.forces[:, None] * springs.directions,
+        )
+        self.reactionForce = springs.forces.sum()
 
     def computeBoundOfAbsoluteStiffnessTimes(
         self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
     ):
-        """Add the row sums of the absolute value of the stiffness of the penalty, weighted by column: a spring of the
-        penalty stiffness along the surface normal at every point inside the surface, moved by the interpolation vector
-        of the point, as in :meth:`computeKernelsExplicit` (see
+        """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted
+        by column (see
         :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
 
         Parameters
@@ -223,25 +239,7 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
             The current time step; unused.
         """
 
-        inside = [p for p in self._constrained_points if self._implicit_function(p) < 0]
-        if not inside:
-            return
-
-        G = np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in inside])
-        directions = np.zeros((len(inside), self._domainSize))
-        for row, p in enumerate(inside):
-            gradient = self._gradient_function(p)
-            norm = np.linalg.norm(gradient)
-            if norm > 1e-14:
-                directions[row] = gradient / norm
-        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
-            bound.reshape(-1, self._fieldSize),
-            self._localNodes,
-            G,
-            directions,
-            np.full(len(inside), self._penaltyParameter),
-            weights.reshape(-1, self._fieldSize),
-        )
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(bound, weights, self._localNodes, self._springs())
 
 
 def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(

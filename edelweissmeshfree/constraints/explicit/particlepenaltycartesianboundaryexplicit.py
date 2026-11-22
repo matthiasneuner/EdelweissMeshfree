@@ -10,6 +10,7 @@ from edelweissmeshfree.constraints.base.mpmexplicitconstraintbase import (
     MPMExplicitConstraintBase,
 )
 from edelweissmeshfree.constraints.base.pointsofparticles import (
+    SpringsOnPointsOfParticle,
     addBoundOfAbsoluteStiffnessOfPointsOfParticle,
     addForcesOnPointsOfParticle,
     locateTheNodesOfParticles,
@@ -185,9 +186,46 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
 
         return hasChanged
 
+    def _springs(self, timeStep: TimeStep) -> SpringsOnPointsOfParticle:
+        """The penalty springs of the boundary at the particle's current position: one of the penalty stiffness at every
+        constrained point that penetrates the boundary, along the component the boundary is normal to, pushing the point
+        back, :math:`f = -k\\, g` with the penetration :math:`g > 0`. The force (:meth:`computeKernelsExplicit`) and the
+        bound of the stiffness (:meth:`computeBoundOfAbsoluteStiffnessTimes`) go through these springs.
+
+        Parameters
+        ----------
+        timeStep
+            The current time step, for the position of the moving boundary.
+
+        Returns
+        -------
+        SpringsOnPointsOfParticle
+            The springs; none if no point penetrates.
+        """
+
+        currentWallPos = self._boundaryPosition + self._velocity * timeStep.stepProgress
+
+        # g > 0 is a penetration: the point is beyond the boundary on the side the orientation points to (1.0: the
+        # boundary above the particle, -1.0: below it).
+        points = np.array(self._constrained_points).reshape((len(self._constrained_points), -1))
+        penetrations = self._orientation * (points[:, self._component] - currentWallPos)
+        penetrating = penetrations > 0
+        # along the orientation, with a negative force: the springs push the points back
+        directions = np.zeros((penetrating.sum(), self._fieldSize))
+        directions[:, self._component] = self._orientation
+        return SpringsOnPointsOfParticle(
+            # the interpolation vector with which the particle moves the point: the force is its transpose
+            np.array(
+                [self._particle.getAttachedPointInterpolationVector(p).flatten() for p in points[penetrating]]
+            ).reshape((len(directions), len(self._localNodes))),
+            directions,
+            -self._penaltyParameter * penetrations[penetrating],
+            np.full(len(directions), self._penaltyParameter),
+        )
+
     def computeKernelsExplicit(self, U_np: np.ndarray, dU: np.ndarray, P: np.ndarray, timeStep: TimeStep):
         """Add the residual contribution of the penalty force: the negative of the force with which the boundary
-        pushes the particle back, evaluated at the particle's current position.
+        pushes the particle back, evaluated at the particle's current position (:meth:`_springs`).
 
         Parameters
         ----------
@@ -201,51 +239,20 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
             The current time step.
         """
 
-        # Explicit: calculate wall position at current time
-        # Assuming stepProgress handles linear motion within step or total time
-        currentWallPos = self._boundaryPosition + self._velocity * timeStep.stepProgress
-
-        penalty = self._penaltyParameter
-        orientation = self._orientation
-        comp = self._component
-
-        total_penalty_force = 0.0
-
-        for p in self._constrained_points:
-            val = p[comp]
-
-            # Calculate penetration g
-            # g > 0 implies penetration
-            # orientation 1.0 (Wall > Point): Penetration if (Point > Wall) -> (Point - Wall) * 1 > 0
-            # orientation -1.0 (Wall < Point): Penetration if (Point < Wall) -> (Point - Wall) * -1 > 0
-            g = orientation * (val - currentWallPos)
-
-            if g > 0:
-                # Force magnitude: proportional to penetration
-                # Force direction: Opposite to penetration direction (pushes particle back)
-                # If orientation is 1.0 (Normal points -x), force should be -x.
-                # If orientation is -1.0 (Normal points +x), force should be +x.
-                # Combined: force_val = -penalty * g * orientation
-                force_scalar = -penalty * g * orientation
-
-                force = np.zeros(self._fieldSize)
-                force[comp] = force_scalar
-                # the interpolation vector with which the particle moves the point: the force is its transpose
-                G = self._particle.getAttachedPointInterpolationVector(p).flatten()
-                addForcesOnPointsOfParticle(
-                    P.reshape(-1, self._fieldSize), self._localNodes, G[np.newaxis, :], force[np.newaxis, :]
-                )
-
-                total_penalty_force += g * penalty
-
-        self.reactionForce = total_penalty_force
+        springs = self._springs(timeStep)
+        addForcesOnPointsOfParticle(
+            P.reshape(-1, self._fieldSize),
+            self._localNodes,
+            springs.interpolations,
+            springs.forces[:, None] * springs.directions,
+        )
+        self.reactionForce = -springs.forces.sum()
 
     def computeBoundOfAbsoluteStiffnessTimes(
         self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
     ):
-        """Add the row sums of the absolute value of the stiffness of the penalty, weighted by column: a spring of the
-        penalty stiffness normal to the boundary at every point that penetrates it, moved by the interpolation vector
-        of the point, as in :meth:`computeKernelsExplicit` (see
+        """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted
+        by column (see
         :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
 
         Parameters
@@ -262,24 +269,7 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
             The current time step.
         """
 
-        currentWallPos = self._boundaryPosition + self._velocity * timeStep.stepProgress
-        penetrating = [
-            p for p in self._constrained_points if self._orientation * (p[self._component] - currentWallPos) > 0
-        ]
-        if not penetrating:
-            return
-
-        G = np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in penetrating])
-        directions = np.zeros((len(penetrating), self._fieldSize))
-        directions[:, self._component] = 1.0
-        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
-            bound.reshape(-1, self._fieldSize),
-            self._localNodes,
-            G,
-            directions,
-            np.full(len(penetrating), self._penaltyParameter),
-            weights.reshape(-1, self._fieldSize),
-        )
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(bound, weights, self._localNodes, self._springs(timeStep))
 
 
 def ParticleExplicitPenaltyCartesianBoundaryConstraintFactory(
