@@ -1,5 +1,6 @@
 import numpy as np
 from edelweissfe.config.phenomena import getFieldSize
+from edelweissfe.constraints.base.constraintbase import NextIncrement
 from edelweissfe.constraints.base.penaltysprings import (
     SpringGradientOnSharedNodes,
     addBoundOfAbsoluteStiffnessOfSprings,
@@ -285,7 +286,13 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             self.penaltyForce[i] = np.sum(P[i :: self._fieldSize])
 
     def addBoundOfAbsoluteStiffnessTimes(
-        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+        self,
+        U_np: np.ndarray,
+        dU: np.ndarray,
+        weights: np.ndarray,
+        bound: np.ndarray,
+        timeStep: TimeStep,
+        nextIncrement: NextIncrement | None = None,
     ):
         """Add the row sums of the absolute value of the stiffness of the support in an explicit analysis, weighted by
         column: a spring of the penalty stiffness :math:`k` along every constrained component :math:`i` of every
@@ -307,6 +314,8 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             The row sums to augment.
         timeStep
             The current time step; unused.
+        nextIncrement
+            The next increment the solver may take; unused: the springs of a support act at every state.
         """
 
         interpolations = [vectors for _, vectors in self._constrainedPointsAndTheirInterpolations()]

@@ -102,6 +102,42 @@ class MPMConstraintBase(ConstraintBase):
 
         return interpolationVectorAtPointOfParticle(particle, coordinates, self.interpolationLinearizedAboutCenter)
 
+    def pointsOfParticleMovedBy(
+        self, dU: np.ndarray, particle, points: np.ndarray, localNodes: np.ndarray, fieldSize: int
+    ) -> np.ndarray:
+        """Where points of a particle are after an increment of the nodes of its kernel functions,
+        :math:`\\boldsymbol{x}_p + \\mathbf{I}_p \\Delta\\boldsymbol{U}`, with the vector the constraint measures a field
+        at the point with (:meth:`interpolationVectorAtPointOf`): for a contact on the points where they are now, its
+        gaps at a state within the next increment of an explicit analysis
+        (:meth:`~edelweissfe.constraints.base.constraintbase.NextIncrement.smallestGaps`).
+
+        Parameters
+        ----------
+        dU
+            The increment, restricted to the constraint.
+        particle
+            The particle.
+        points
+            The points now, one row each.
+        localNodes
+            Where the nodes of the particle's kernel functions sit in the constraint's block.
+        fieldSize
+            The size of the field the constraint acts on.
+
+        Returns
+        -------
+        np.ndarray
+            The points after the increment, one row each.
+        """
+
+        incrementOfTheKernelFunctions = np.reshape(dU, (-1, fieldSize))[localNodes]
+        return np.array(
+            [
+                p + self.interpolationVectorAtPointOf(particle, p).flatten() @ incrementOfTheKernelFunctions
+                for p in points
+            ]
+        ).reshape(np.shape(points))
+
     @property
     @abstractmethod
     def name(self) -> str:

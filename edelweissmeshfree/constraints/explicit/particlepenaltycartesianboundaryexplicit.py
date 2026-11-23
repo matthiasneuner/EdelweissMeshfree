@@ -2,6 +2,7 @@ from collections.abc import Iterable
 
 import numpy as np
 from edelweissfe.config.phenomena import getFieldSize
+from edelweissfe.constraints.base.constraintbase import NextIncrement
 from edelweissfe.surfaces.entitybasedsurface import EntityBasedSurface
 from edelweissfe.timesteppers.timestep import TimeStep
 from edelweissfe.variables.scalarvariable import ScalarVariable
@@ -193,16 +194,20 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
 
         return hasChanged
 
-    def _springs(self, timeStep: TimeStep) -> SpringsOnPointsOfParticle:
+    def _springs(self, timeStep: TimeStep, nextIncrement: NextIncrement | None = None) -> SpringsOnPointsOfParticle:
         """The penalty springs of the boundary at the particle's current position: one of the penalty stiffness at every
         constrained point that penetrates the boundary, along the component the boundary is normal to, pushing the point
-        back, :math:`f = -k\\, g` with the penetration :math:`g > 0`. The force (:meth:`computeKernelsExplicit`) and the
-        bound of the stiffness (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs.
+        back, :math:`f = k\\, g` with the gap :math:`g < 0`. The force (:meth:`computeKernelsExplicit`) and the bound of
+        the stiffness (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs; the bound over the next
+        increment with the smallest gap of each point within it, the boundary moved on with it
+        (:meth:`~edelweissfe.constraints.base.constraintbase.NextIncrement.smallestGaps`).
 
         Parameters
         ----------
         timeStep
             The current time step, for the position of the moving boundary.
+        nextIncrement
+            The next increment, for the bound over it; None for the state now.
 
         Returns
         -------
@@ -210,13 +215,19 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
             The springs; none if no point penetrates.
         """
 
-        currentWallPos = self._boundaryPosition + self._velocity * timeStep.stepProgress
-
-        # g > 0 is a penetration: the point is beyond the boundary on the side the orientation points to (1.0: the
+        # g < 0 is a penetration: the point is beyond the boundary on the side the orientation points to (1.0: the
         # boundary above the particle, -1.0: below it).
         points = np.array(self._constrained_points).reshape((len(self._constrained_points), -1))
-        penetrations = self._orientation * (points[:, self._component] - currentWallPos)
-        penetrating = penetrations > 0
+        gaps = self._gapsOfPoints(points, timeStep)
+        if nextIncrement is not None:
+
+            def gapsAt(U, dU, timeStep):
+                moved = self.pointsOfParticleMovedBy(dU, self._particle, points, self._localNodes, self._fieldSize)
+                return self._gapsOfPoints(moved, timeStep)
+
+            zero = np.zeros(self.nDof)
+            gaps = nextIncrement.smallestGaps(gapsAt, zero, zero, timeStep)
+        penetrating = gaps < 0
         # along the orientation, with a negative force: the springs push the points back
         directions = np.zeros((penetrating.sum(), self._fieldSize))
         directions[:, self._component] = self._orientation
@@ -226,9 +237,28 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
                 [self.interpolationVectorAtPointOf(self._particle, p).flatten() for p in points[penetrating]]
             ).reshape((len(directions), len(self._localNodes))),
             directions,
-            -self._penaltyParameter * penetrations[penetrating],
+            self._penaltyParameter * gaps[penetrating],
             np.full(len(directions), self._penaltyParameter),
         )
+
+    def _gapsOfPoints(self, points: np.ndarray, timeStep: TimeStep) -> np.ndarray:
+        """The gaps of points to the boundary where it is at the end of a time step, negative beyond it.
+
+        Parameters
+        ----------
+        points
+            The points, one row each.
+        timeStep
+            The time step, for the position of the moving boundary.
+
+        Returns
+        -------
+        np.ndarray
+            The gaps.
+        """
+
+        wallPosition = self._boundaryPosition + self._velocity * timeStep.stepProgress
+        return -self._orientation * (points[:, self._component] - wallPosition)
 
     def computeKernelsExplicit(self, U_np: np.ndarray, dU: np.ndarray, P: np.ndarray, timeStep: TimeStep):
         """Add the residual contribution of the penalty force: the negative of the force with which the boundary
@@ -256,11 +286,18 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
         self.reactionForce = -springs.forces.sum()
 
     def addBoundOfAbsoluteStiffnessTimes(
-        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+        self,
+        U_np: np.ndarray,
+        dU: np.ndarray,
+        weights: np.ndarray,
+        bound: np.ndarray,
+        timeStep: TimeStep,
+        nextIncrement: NextIncrement | None = None,
     ):
         """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted
         by column (see
-        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
+        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`),
+        over the next increment if it is given: a point that could close within it has its spring.
 
         Parameters
         ----------
@@ -274,9 +311,13 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
             The row sums to augment.
         timeStep
             The current time step.
+        nextIncrement
+            The next increment the solver may take; None to bound the state now alone.
         """
 
-        addBoundOfAbsoluteStiffnessOfPointsOfParticle(bound, weights, self._localNodes, self._springs(timeStep))
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
+            bound, weights, self._localNodes, self._springs(timeStep, nextIncrement)
+        )
 
 
 def ParticleExplicitPenaltyCartesianBoundaryConstraintFactory(

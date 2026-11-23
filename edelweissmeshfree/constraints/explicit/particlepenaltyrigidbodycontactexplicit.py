@@ -2,6 +2,7 @@ from collections.abc import Callable, Iterable
 
 import numpy as np
 from edelweissfe.config.phenomena import getFieldSize
+from edelweissfe.constraints.base.constraintbase import NextIncrement
 from edelweissfe.surfaces.entitybasedsurface import EntityBasedSurface
 from edelweissfe.timesteppers.timestep import TimeStep
 from edelweissfe.variables.scalarvariable import ScalarVariable
@@ -169,12 +170,21 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
 
         return hasChanged
 
-    def _springs(self) -> SpringsOnPointsOfParticle:
+    def _springs(self, timeStep: TimeStep, nextIncrement: NextIncrement | None = None) -> SpringsOnPointsOfParticle:
         """The penalty springs of the contact at the particle's current position: one of the penalty stiffness at every
         constrained point inside the surface (negative signed distance :math:`d`), along the outward unit normal (the
         normalized gradient of the signed distance; none where the gradient vanishes), pushing the point out with
         :math:`f = k\\, |d|`. The force (:meth:`computeKernelsExplicit`) and the bound of the stiffness
-        (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs.
+        (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs; the bound over the next increment with the
+        smallest signed distance of each point within it
+        (:meth:`~edelweissfe.constraints.base.constraintbase.NextIncrement.smallestGaps`).
+
+        Parameters
+        ----------
+        timeStep
+            The current time step.
+        nextIncrement
+            The next increment, for the bound over it; None for the state now.
 
         Returns
         -------
@@ -183,6 +193,16 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         """
 
         distances = np.array([self._implicit_function(p) for p in self._constrained_points])
+        if nextIncrement is not None:
+
+            def distancesAt(U, dU, timeStep):
+                moved = self.pointsOfParticleMovedBy(
+                    dU, self._particle, self._constrained_points, self._localNodes, self._fieldSize
+                )
+                return np.array([self._implicit_function(p) for p in moved])
+
+            zero = np.zeros(self.nDof)
+            distances = nextIncrement.smallestGaps(distancesAt, zero, zero, timeStep)
         inside = [p for p, distance in zip(self._constrained_points, distances) if distance < 0]
         directions = np.zeros((len(inside), self._domainSize))
         for row, p in enumerate(inside):
@@ -216,7 +236,7 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
             The current time step; unused.
         """
 
-        springs = self._springs()
+        springs = self._springs(timeStep)
         addForcesOnPointsOfParticle(
             P.reshape(-1, self._fieldSize),
             self._localNodes,
@@ -226,11 +246,18 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         self.reactionForce = springs.forces.sum()
 
     def addBoundOfAbsoluteStiffnessTimes(
-        self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
+        self,
+        U_np: np.ndarray,
+        dU: np.ndarray,
+        weights: np.ndarray,
+        bound: np.ndarray,
+        timeStep: TimeStep,
+        nextIncrement: NextIncrement | None = None,
     ):
         """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted
         by column (see
-        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`).
+        :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addBoundOfAbsoluteStiffnessOfPointsOfParticle`),
+        over the next increment if it is given: a point that could close within it has its spring.
 
         Parameters
         ----------
@@ -243,10 +270,14 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         bound
             The row sums to augment.
         timeStep
-            The current time step; unused.
+            The current time step.
+        nextIncrement
+            The next increment the solver may take; None to bound the state now alone.
         """
 
-        addBoundOfAbsoluteStiffnessOfPointsOfParticle(bound, weights, self._localNodes, self._springs())
+        addBoundOfAbsoluteStiffnessOfPointsOfParticle(
+            bound, weights, self._localNodes, self._springs(timeStep, nextIncrement)
+        )
 
 
 def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(
