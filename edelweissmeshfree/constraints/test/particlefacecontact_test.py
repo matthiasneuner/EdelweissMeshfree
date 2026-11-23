@@ -134,7 +134,9 @@ def _contact(
     contact = SurfaceContact(
         "contact",
         model,
-        ContactPointsOnParticleFaces([(particle, 1) for particle in particles], nQuadraturePoints),
+        ContactPointsOnParticleFaces(
+            [(particle, 1) for particle in particles], nQuadraturePoints, interpolationLinearizedAboutCenter=True
+        ),
         master,
         journal or JournalStandIn(),
         configuration=SurfaceToDeformableSurfacePenaltySchema(
@@ -223,7 +225,9 @@ def test_an_overlap_at_the_first_update_can_be_ramped_out():
         contact = SurfaceContact(
             "contact",
             model,
-            ContactPointsOnParticleFaces([(particle, 1) for particle in particles], 2),
+            ContactPointsOnParticleFaces(
+                [(particle, 1) for particle in particles], 2, interpolationLinearizedAboutCenter=True
+            ),
             _masterBlock(model, JournalStandIn()),
             JournalStandIn(),
             configuration=SurfaceToDeformableSurfacePenaltySchema(

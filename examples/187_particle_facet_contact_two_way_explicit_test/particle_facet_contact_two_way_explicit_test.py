@@ -272,7 +272,9 @@ def run_sim(
     if impactor == "particles":
         addParticleBlock(model, journal, "impactor", x0Impactor, STANDOFF, IMPACTOR_SIZE, IMPACTOR_SIZE)
         # two quadrature points on the bottom face of every particle of the bottom row
-        contactPoints = ContactPointsOnParticleFaces(model.surfaces["impactor_bottom"], nQuadraturePoints=2)
+        contactPoints = ContactPointsOnParticleFaces(
+            model.surfaces["impactor_bottom"], nQuadraturePoints=2, interpolationLinearizedAboutCenter=True
+        )
 
         def impactorVelocity():
             # the particles have the same mass

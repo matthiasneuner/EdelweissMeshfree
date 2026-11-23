@@ -45,9 +45,12 @@ shape functions linearized about its center
 are affine in :math:`\\boldsymbol{x}`. So a face stays flat if it is flat, and a point at fixed parametric coordinates
 :math:`\\xi_q` of the face stays there. Such a point is a contact point: it sits at
 :math:`\\boldsymbol{x}_q = \\sum_a N_a(\\xi_q) \\boldsymbol{x}_a` (the face's vertices :math:`\\boldsymbol{x}_a`),
-moves with :math:`G(\\boldsymbol{x}_q)`, and stands for the area :math:`J_q w_q` of its share of the face. Its
-contact force reaches the nodes of the particle's kernel functions with the same :math:`G`, the transpose of its
-motion (:mod:`~edelweissmeshfree.constraints.base.pointsofparticles`), so the penalty is conservative.
+and stands for the area :math:`J_q w_q` of its share of the face. With ``interpolationLinearizedAboutCenter``, the
+contact measures its motion with :math:`G(\\boldsymbol{x}_q)`, and its contact force reaches the nodes of the
+particle's kernel functions with the same :math:`G`, the transpose of its motion, so the penalty is conservative.
+Without, the contact measures and distributes with the shape functions at the point, :math:`N(\\boldsymbol{x}_q)`,
+the default of every constraint on points of particles
+(:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`).
 
 For a constant pressure on a face, :math:`\\sum_q w_q J_q G(\\boldsymbol{x}_q) = A\\, G(\\boldsymbol{x}_c)` for every
 rule that integrates a linear function exactly: one point at the face's center already delivers the resultant and its
@@ -64,6 +67,7 @@ from edelweissfe.utils.parentfacegeometry import parentFaceShapeFunctions
 from scipy.sparse import csr_matrix
 
 from edelweissmeshfree.constraints.base.pointsofparticles import (
+    interpolationVectorAtPointOfParticle,
     locateTheNodesOfParticles,
 )
 
@@ -111,7 +115,7 @@ class ContactPointsOnParticleFaces(ContactPoints):
     (:func:`~edelweissmeshfree.constraints.base.pointsofparticles.locateTheNodesOfParticles`). The interpolation
     vectors of the located points form one sparse matrix :math:`C` over these nodes, made once per update of the
     connectivity: the points move by :math:`C\\, \\Delta\\boldsymbol{U}`, and their forces reach the nodes with
-    :math:`C^T`.
+    :math:`C^T`. The vectors are :math:`G` or :math:`N`, by ``interpolationLinearizedAboutCenter``.
 
     Parameters
     ----------
@@ -121,13 +125,21 @@ class ContactPointsOnParticleFaces(ContactPoints):
         1 (:data:`verticesOfFace`); others are refused.
     nQuadraturePoints
         The number of quadrature points per face: 1 (the face's center) or 2 in 2D, 1 or 4 (2 x 2) in 3D.
+    interpolationLinearizedAboutCenter
+        False (default): measure the motion of a point and distribute its force with the shape functions at the point,
+        N. True: with the particle's interpolation linearized about its center, G, with which the particle moves its own
+        points (symmetric and conservative). See
+        :meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`.
     """
 
     #: The points are located on the kernel functions of their particles, which the model connects at an update of the
     #: connectivity (and a checkpoint does not hold).
     locatedOnlyWhenConnected = True
 
-    def __init__(self, faces: dict | Iterable, nQuadraturePoints: int = 1):
+    def __init__(
+        self, faces: dict | Iterable, nQuadraturePoints: int = 1, interpolationLinearizedAboutCenter: bool = False
+    ):
+        self.interpolationLinearizedAboutCenter = interpolationLinearizedAboutCenter
         pairs = (
             [(particle, faceID) for faceID, particles in faces.items() for particle in particles]
             if isinstance(faces, dict)
@@ -245,7 +257,8 @@ class ContactPointsOnParticleFaces(ContactPoints):
 
     def locatePoints(self, points: np.ndarray) -> list:
         """Locate the given points: the nodes of the kernel functions of their particles, each once, and the sparse
-        matrix of their interpolation vectors :math:`G(\\boldsymbol{x}_q)` at their current positions.
+        matrix of their interpolation vectors (:math:`G(\\boldsymbol{x}_q)` or :math:`N(\\boldsymbol{x}_q)`, see
+        ``interpolationLinearizedAboutCenter``) at their current positions.
 
         Parameters
         ----------
@@ -273,7 +286,9 @@ class ContactPointsOnParticleFaces(ContactPoints):
         self._coordinatesOfLocated = self._coordinatesOfAllPoints()[points] if len(points) else np.zeros((0, self.nDim))
         columns = [localNodesOfParticle[particle] for particle in particleOfPoint]
         values = [
-            self._particles[particle].getInterpolationVectorLinearizedAboutCenter(x).ravel()
+            interpolationVectorAtPointOfParticle(
+                self._particles[particle], x, self.interpolationLinearizedAboutCenter
+            ).ravel()
             for particle, x in zip(particleOfPoint, self._coordinatesOfLocated)
         ]
         counts = np.array([len(c) for c in columns], dtype=np.intp)
@@ -327,7 +342,7 @@ class ContactPointsOnParticleFaces(ContactPoints):
         P.reshape((-1, self.nDim))[:] += self._interpolationMatrix.T @ forcesOnPoints
 
     def interpolationMatrixOfLocatedPoints(self) -> csr_matrix:
-        """The sparse matrix :math:`C` of the interpolation vectors :math:`G(\\boldsymbol{x}_q)` of the located points
+        """The sparse matrix :math:`C` of the interpolation vectors of the located points
         over the nodes of the kernel functions of their particles, made when they were located; see
         :meth:`~edelweissfe.constraints.base.contactpoints.ContactPoints.interpolationMatrixOfLocatedPoints`.
 
@@ -341,7 +356,7 @@ class ContactPointsOnParticleFaces(ContactPoints):
 
     def interpolationOfLocatedPoint(self, k: int) -> tuple[np.ndarray, np.ndarray]:
         """The degrees of freedom of the nodes of the kernel functions of a located point's particle, and its
-        interpolation vector :math:`G(\\boldsymbol{x}_q)` over them.
+        interpolation vector over them.
 
         Parameters
         ----------

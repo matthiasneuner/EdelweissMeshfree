@@ -206,7 +206,9 @@ def run_sim(floor: str):
         facetContact = SurfaceContact(
             "floor",
             theModel,
-            ContactPointsOnParticleFaces(theModel.surfaces["projectile_bottom"], nQuadraturePoints=1),
+            ContactPointsOnParticleFaces(
+                theModel.surfaces["projectile_bottom"], nQuadraturePoints=1, interpolationLinearizedAboutCenter=True
+            ),
             floorFacets,
             theJournal,
             configuration=SurfaceToDeformableSurfacePenaltySchema(penalty=PENALTY_PER_AREA, searchDistance=5.0),

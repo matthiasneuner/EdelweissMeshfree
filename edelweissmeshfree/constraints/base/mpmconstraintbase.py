@@ -11,6 +11,10 @@ import numpy as np
 from edelweissfe.constraints.base.constraintbase import ConstraintBase
 from edelweissfe.variables.scalarvariable import ScalarVariable
 
+from edelweissmeshfree.constraints.base.pointsofparticles import (
+    interpolationVectorAtPointOfParticle,
+)
+
 
 class MPMConstraintBase(ConstraintBase):
     """The base class of the constraints of EdelweissMeshfree; implement a new constraint by deriving from it.
@@ -96,9 +100,7 @@ class MPMConstraintBase(ConstraintBase):
             The vector, one value per kernel function of the particle.
         """
 
-        if self.interpolationLinearizedAboutCenter:
-            return particle.getInterpolationVectorLinearizedAboutCenter(coordinates)
-        return particle.getInterpolationVector(coordinates)
+        return interpolationVectorAtPointOfParticle(particle, coordinates, self.interpolationLinearizedAboutCenter)
 
     @property
     @abstractmethod

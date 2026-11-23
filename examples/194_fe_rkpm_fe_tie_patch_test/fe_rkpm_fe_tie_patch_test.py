@@ -281,8 +281,12 @@ def run(
     stepActions = StepActionCollection()
     if middle == "particles":
         addParticleBlock(model, journal, offset, particleSize)
-        bottom = ContactPointsOnParticleFaces(model.surfaces["block_bottom"], nQuadraturePoints=4)
-        top = ContactPointsOnParticleFaces(model.surfaces["block_top"], nQuadraturePoints=4)
+        bottom = ContactPointsOnParticleFaces(
+            model.surfaces["block_bottom"], nQuadraturePoints=4, interpolationLinearizedAboutCenter=True
+        )
+        top = ContactPointsOnParticleFaces(
+            model.surfaces["block_top"], nQuadraturePoints=4, interpolationLinearizedAboutCenter=True
+        )
     else:
         addFiniteElementBlock(model, journal, "block", offset, MIDDLE)
         bottom = ContactPointsOnSlaveSurface(model.elementSets[facets(model, journal, "block_back")], 3, "lower")

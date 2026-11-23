@@ -75,7 +75,11 @@ and examples 194 (the patch test) and 195 (a pulse through the ties).
     from edelweissmeshfree.constraints.base.contactpointsonparticlefaces import ContactPointsOnParticleFaces
 
     model.constraints["tie"] = Constraint(
-        "tie", model, ContactPointsOnParticleFaces(model.surfaces["rkpm_bottom"], nQuadraturePoints=4),
+        "tie",
+        model,
+        ContactPointsOnParticleFaces(
+            model.surfaces["rkpm_bottom"], nQuadraturePoints=4, interpolationLinearizedAboutCenter=True
+        ),
         model.elementSets["fe_top_facets"], journal,
         configuration=SurfaceToDeformableSurfacePenaltySchema(penalty=1e6, contactType="tied", searchDistance=0.5),
     )

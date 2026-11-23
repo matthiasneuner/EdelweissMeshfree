@@ -214,7 +214,12 @@ def tieTheSegment(model: MPMModel, journal: Journal, segment: str):
     # boxgen names the faces of elements back (z min) and front (z max)
     masters = [facets(model, journal, face) for face in ("left_front", "right_back")]
     if segment == "particles":
-        ends = [ContactPointsOnParticleFaces(model.surfaces[f"segment_{end}"], nQuadraturePoints=4) for end in ("bottom", "top")]  # fmt: skip
+        ends = [
+            ContactPointsOnParticleFaces(
+                model.surfaces[f"segment_{end}"], nQuadraturePoints=4, interpolationLinearizedAboutCenter=True
+            )
+            for end in ("bottom", "top")
+        ]
     else:
         ends = [ContactPointsOnSlaveSurface(model.elementSets[facets(model, journal, f"segment_{end}")], 3, end) for end in ("back", "front")]  # fmt: skip
     configuration = SurfaceToDeformableSurfacePenaltySchema(

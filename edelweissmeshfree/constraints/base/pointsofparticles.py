@@ -90,6 +90,35 @@ def locateTheNodesOfParticles(kernelFunctionsOfParticles: Iterable[list], localI
     ]
 
 
+def interpolationVectorAtPointOfParticle(particle, coordinates: np.ndarray, linearizedAboutCenter: bool) -> np.ndarray:
+    """The vector with which a constraint measures a field at a point of a particle and distributes its force there:
+    the particle's interpolation linearized about its center, :math:`\\mathbf{G}`, if ``linearizedAboutCenter``, else the
+    shape functions at the point, :math:`\\mathbf{N}`. What each means for a constraint is documented once, at
+    :meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`,
+    which the constraints call; the contact points on the faces of particles
+    (:class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`), which are
+    no constraint of their own, call this function.
+
+    Parameters
+    ----------
+    particle
+        The particle.
+    coordinates
+        The point, in the current configuration of the particle.
+    linearizedAboutCenter
+        The option ``interpolationLinearizedAboutCenter`` of the constraint or of the contact points.
+
+    Returns
+    -------
+    np.ndarray
+        The vector, one value per kernel function of the particle.
+    """
+
+    if linearizedAboutCenter:
+        return particle.getInterpolationVectorLinearizedAboutCenter(coordinates)
+    return particle.getInterpolationVector(coordinates)
+
+
 def addForcesOnPointsOfParticle(
     PAtNodes: np.ndarray,
     localNodes: np.ndarray,

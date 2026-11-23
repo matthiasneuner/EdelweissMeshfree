@@ -221,8 +221,12 @@ def run(block: str) -> tuple[MPMModel, list]:
     stepActions = StepActionCollection()
     if block == "particles":
         addParticleBlock(model, journal, -OVERLAP)
-        bottom = ContactPointsOnParticleFaces(model.surfaces["block_bottom"], nQuadraturePoints=2)
-        top = ContactPointsOnParticleFaces(model.surfaces["block_top"], nQuadraturePoints=2)
+        bottom = ContactPointsOnParticleFaces(
+            model.surfaces["block_bottom"], nQuadraturePoints=2, interpolationLinearizedAboutCenter=True
+        )
+        top = ContactPointsOnParticleFaces(
+            model.surfaces["block_top"], nQuadraturePoints=2, interpolationLinearizedAboutCenter=True
+        )
         # the left vertices of the particles on the left side, held in x
         model.constraints["blockLeft"] = ParticlePenaltyWeakDirichlet(
             "blockLeft", model, list(model.particleSets["block_left"]), "displacement", {0: 0.0}, PENALTY * SIZE, [0, 3]

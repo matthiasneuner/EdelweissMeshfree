@@ -67,8 +67,9 @@ the center, :math:`\mathbf{G}`
 the displacement, the motion of the point. The shape functions at the point, :math:`\mathbf{N}`
 (:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getInterpolationVector`), are exact at an arbitrary
 location and differ from :math:`\mathbf{G}` away from the center. The constraints that act on points of particles (the
-penalty weak Dirichlet condition, the cartesian boundaries, the rigid body contacts, implicit and explicit) take one
-option, ``interpolationLinearizedAboutCenter``
+penalty weak Dirichlet condition, the cartesian boundaries, the rigid body contacts, implicit and explicit) and the
+contact points on the faces of particles (:ref:`the contact, the tie and the rigid contact of particle faces
+<particle-face-contact>`) take one option, ``interpolationLinearizedAboutCenter``
 (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`):
 
 - ``False``, the default: they measure the field at the point and distribute their force there with :math:`\mathbf{N}`.
@@ -79,10 +80,10 @@ option, ``interpolationLinearizedAboutCenter``
   :math:`k\,\mathbf{G}\mathbf{G}^\mathsf{T}` is symmetric and the constraint conservative;
   ``edelweissmeshfree/constraints/test/vertexpenaltywork_test.py`` checks that a support on the vertices and a contact
   on a face of a real particle then do no work over a closed cycle.
-  The FE-particle impact (:doc:`fe_projectile_on_rkpm_slab`) opts in.
+  The FE-particle impact (:doc:`fe_projectile_on_rkpm_slab`) and the examples of the contact and the tie of particle
+  faces (185, 187, 191-195) opt in.
 
-The contact points on the faces of particles (:ref:`contact of particles <particle-face-contact>`) move and distribute
-their force with :math:`\mathbf{G}`. The two operations a constraint on points of particles needs besides its own
+The two operations a constraint on points of particles needs besides its own
 physics -- locating the nodes of its particles in its block, and distributing a force on a point -- are in
 :mod:`edelweissmeshfree.constraints.base.pointsofparticles`, which the explicit constraints and the support use: a new
 constraint on points of particles is its physics and a constructor.
@@ -216,8 +217,8 @@ Particles meet a body of finite elements through EdelweissFE's contact constrain
 elements: it is one contact for every kind of contact point (see EdelweissFE's contact theory, *One contact for every
 kind of contact point*). The contact points of particles are quadrature points on faces of particles -- a surface of
 particles, as the generators and the side sets of an Exodus mesh make them, or (particle, face) pairs -- each moving
-with the particle's interpolation linearized about its center, :math:`\mathbf{G}` (see *Points of a particle* above),
-and standing for its share of the face, so the penalty is a stiffness per unit area, as for finite elements. The master is the faceted boundary of the finite
+with the particle's interpolation linearized about its center, :math:`\mathbf{G}`, with
+``interpolationLinearizedAboutCenter`` (see *Points of a particle* above), and standing for its share of the face, so the penalty is a stiffness per unit area, as for finite elements. The master is the faceted boundary of the finite
 elements, which EdelweissFE's surface element generator creates; it may have corners, convex and re-entrant, such as
 the crests and roots of a thread (EdelweissFE's contact theory, *Corners of the master*). An overlap at the start is
 either real, such as a groove cut smaller than the thread, and pushed apart, at once or over a time
@@ -256,7 +257,8 @@ nodes of finite elements with a rigid body (EdelweissFE's contact theory, *Integ
 body*): the constraint is built with :class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`
 in place of the faces of elements. Each point is paired with the plane of its closest triangle of the rigid surface,
 which moves and rotates with the body's reference point; the force of a point reaches the nodes of the kernel functions
-of its particle with :math:`\mathbf{G}`, and the reference point with the force and its moment. Points farther than the
+of its particle with :math:`\mathbf{G}` (or :math:`\mathbf{N}`, by ``interpolationLinearizedAboutCenter``), and the
+reference point with the force and its moment. Points farther than the
 search distance from the rigid surface take no part until they approach. Its tests are
 ``edelweissmeshfree/constraints/test/particlefacerigidcontact_test.py`` (the force and the moment of a pressed face,
 action = reaction, the tangent by central differences against a moved and rotated body, a particle that approaches).
