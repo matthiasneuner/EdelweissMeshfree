@@ -154,7 +154,7 @@ def test_the_rows_of_a_penalty_support_added_to_the_particles_bound_the_exact_ei
         return 2.0 / np.sqrt(np.max(np.abs(np.linalg.eigvals(S))))
 
     bound = np.zeros(support.nDof)
-    support.computeBoundOfAbsoluteStiffnessTimes(None, None, s[indices], bound, None)
+    support.addBoundOfAbsoluteStiffnessTimes(None, None, s[indices], bound, None)
     rowSums = np.zeros_like(M)
     np.add.at(rowSums, indices, bound)
     rowSums *= s

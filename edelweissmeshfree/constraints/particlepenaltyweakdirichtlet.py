@@ -55,7 +55,7 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
     A support holds only as well as its penalty is stiff against the material next to it: a penalty that is merely
     comparable to the stiffness of a particle lets the support give way and spring back, an error that does not shrink
     with the particle size. A stiffer one costs time increments: the explicit solver adds its springs to the
-    frequencies of the nodes they hold (:meth:`computeBoundOfAbsoluteStiffnessTimes`), and a support far stiffer than
+    frequencies of the nodes they hold (:meth:`addBoundOfAbsoluteStiffnessTimes`), and a support far stiffer than
     the particles sets the critical time step, about :math:`2 \sqrt{m / k}` with :math:`m` the mass a constrained point
     carries; see example 186.
 
@@ -284,7 +284,7 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         for i in self._prescribedStepDelta:
             self.penaltyForce[i] = np.sum(P[i :: self._fieldSize])
 
-    def computeBoundOfAbsoluteStiffnessTimes(
+    def addBoundOfAbsoluteStiffnessTimes(
         self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
     ):
         """Add the row sums of the absolute value of the stiffness of the support in an explicit analysis, weighted by
@@ -341,7 +341,7 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         """Per constrained particle, where its constrained points are now, and the vectors the force there is
         distributed with (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`),
         one row per point: what the force (:meth:`computeKernelsExplicit`) and the bound of the stiffness
-        (:meth:`computeBoundOfAbsoluteStiffnessTimes`) of the explicit support are made from.
+        (:meth:`addBoundOfAbsoluteStiffnessTimes`) of the explicit support are made from.
 
         Returns
         -------

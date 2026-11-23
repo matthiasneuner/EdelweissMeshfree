@@ -197,7 +197,7 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
         """The penalty springs of the boundary at the particle's current position: one of the penalty stiffness at every
         constrained point that penetrates the boundary, along the component the boundary is normal to, pushing the point
         back, :math:`f = -k\\, g` with the penetration :math:`g > 0`. The force (:meth:`computeKernelsExplicit`) and the
-        bound of the stiffness (:meth:`computeBoundOfAbsoluteStiffnessTimes`) go through these springs.
+        bound of the stiffness (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs.
 
         Parameters
         ----------
@@ -255,7 +255,7 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
         )
         self.reactionForce = -springs.forces.sum()
 
-    def computeBoundOfAbsoluteStiffnessTimes(
+    def addBoundOfAbsoluteStiffnessTimes(
         self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
     ):
         """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted

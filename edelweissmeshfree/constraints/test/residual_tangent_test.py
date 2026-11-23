@@ -439,7 +439,7 @@ def assertTheBoundIsTheOneOfTheTangentOfTheTwin(explicit, implicit):
     _, KImplicit = residualContributionAndTangent(implicit, zero, zero, TIMESTEP)
     weights = np.random.default_rng(3).uniform(0.5, 2.0, explicit.nDof)
     bound = np.zeros(explicit.nDof)
-    explicit.computeBoundOfAbsoluteStiffnessTimes(zero, zero, weights, bound, TIMESTEP)
+    explicit.addBoundOfAbsoluteStiffnessTimes(zero, zero, weights, bound, TIMESTEP)
     assert bound.max() > 0.0
     np.testing.assert_allclose(bound, np.abs(KImplicit) @ weights, rtol=1e-13)
 

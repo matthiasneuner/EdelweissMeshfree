@@ -145,7 +145,7 @@ def addBoundOfAbsoluteStiffnessOfPointsOfParticle(
     bound: np.ndarray, weights: np.ndarray, localNodes: np.ndarray, springs: SpringsOnPointsOfParticle
 ):
     """Add the row sums of the absolute value of the stiffness of penalty springs on points of one particle, weighted
-    by column (see :meth:`~edelweissfe.constraints.base.constraintbase.ConstraintBase.computeBoundOfAbsoluteStiffnessTimes`).
+    by column (see :meth:`~edelweissfe.constraints.base.constraintbase.ConstraintBase.addBoundOfAbsoluteStiffnessTimes`).
     A spring of stiffness :math:`k_p` on the point :math:`p` along the unit direction :math:`\\boldsymbol{n}_p` has the
     stiffness :math:`k_p\\, \\boldsymbol{w}_p \\otimes \\boldsymbol{w}_p` with :math:`\\boldsymbol{w}_p = I_p
     \\otimes \\boldsymbol{n}_p` and the vector :math:`I_p` of the point (:attr:`SpringsOnPointsOfParticle.interpolations`),

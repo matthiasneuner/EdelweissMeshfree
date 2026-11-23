@@ -174,7 +174,7 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         constrained point inside the surface (negative signed distance :math:`d`), along the outward unit normal (the
         normalized gradient of the signed distance; none where the gradient vanishes), pushing the point out with
         :math:`f = k\\, |d|`. The force (:meth:`computeKernelsExplicit`) and the bound of the stiffness
-        (:meth:`computeBoundOfAbsoluteStiffnessTimes`) go through these springs.
+        (:meth:`addBoundOfAbsoluteStiffnessTimes`) go through these springs.
 
         Returns
         -------
@@ -225,7 +225,7 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         )
         self.reactionForce = springs.forces.sum()
 
-    def computeBoundOfAbsoluteStiffnessTimes(
+    def addBoundOfAbsoluteStiffnessTimes(
         self, U_np: np.ndarray, dU: np.ndarray, weights: np.ndarray, bound: np.ndarray, timeStep: TimeStep
     ):
         """Add the row sums of the absolute value of the stiffness of the penalty springs (:meth:`_springs`), weighted
