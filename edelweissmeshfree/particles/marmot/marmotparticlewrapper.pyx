@@ -270,33 +270,23 @@ cdef class MarmotParticleWrapper:
 
         self._marmotParticle.computeLumpedDamping(&cLumped[0])
 
-    def computeTangentOfTheCurrentState(self, double[::1] K):
-        """The tangent at the current state, whose state variables are left unchanged; see
-        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.computeTangentOfTheCurrentState`. A zero
-        increment is evaluated on the working copy of the state, which is then reset to the state; over a unit time
-        increment at time zero, see there."""
+    def assembleStiffness(self, double[::1] K):
+        """Add the stiffness; see
+        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.assembleStiffness`: Marmot's assembling
+        visitor of the stiffness the particle describes, which leaves the particle as it was found; over a unit time
+        increment at time zero."""
 
-        cdef double[::1] zero = np.zeros(self.nDof)
-        cdef double[::1] P = np.zeros(self.nDof)
-        self._initializeStateVarsTemp()
-        try:
-            self._marmotParticle.computePhysicsKernels(&zero[0], &P[0], &K[0], 0.0, 1.0)
-        finally:
-            self._initializeStateVarsTemp()
+        assembleStiffness(dereference(self._marmotParticle), &K[0], 0.0, 1.0)
 
-    def computeBoundOfAbsoluteStiffnessTimes(self, double[::1, :] W, double[::1, :] bound):
-        """Add an upper bound of the absolute value of the stiffness at the current state times the weights, which
-        leaves the state variables unchanged; see
-        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.computeBoundOfAbsoluteStiffnessTimes`. Marmot
-        evaluates a zero increment on the working copy of the state, which is then reset to the state; over a unit
-        time increment at time zero, as
-        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.computeTangentOfTheCurrentState`."""
+    def addBoundOfAbsoluteStiffnessTimes(self, double[::1, :] W, double[::1, :] bound):
+        """Add an upper bound of the absolute value of the stiffness times the weights; see
+        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.addBoundOfAbsoluteStiffnessTimes`: Marmot's
+        visitor of the stiffness the particle describes, which leaves the particle as it was found; over a unit time
+        increment at time zero, as :meth:`assembleStiffness`."""
 
-        self._initializeStateVarsTemp()
-        try:
-            self._marmotParticle.computeBoundOfAbsoluteStiffnessTimes(&W[0, 0], W.shape[1], &bound[0, 0], 0.0, 1.0)
-        finally:
-            self._initializeStateVarsTemp()
+        addBoundOfAbsoluteStiffnessTimes(
+            dereference(self._marmotParticle), &W[0, 0], W.shape[1], &bound[0, 0], 0.0, 1.0
+        )
 
     cpdef void _initializeStateVarsTemp(self, ) nogil:
         self._stateVarsTemp[:] = self._stateVars
@@ -328,10 +318,13 @@ cdef class MarmotParticleWrapper:
         self._marmotParticle.getInterpolationVector(&Nview_[0], &coordinates[0])
         return N
 
-    def getAttachedPointInterpolationVector(self, double[::1] coordinates) -> np.ndarray:
+    def getInterpolationVectorLinearizedAboutCenter(self, double[::1] coordinates) -> np.ndarray:
+        """The shape functions linearized about the center; see
+        :meth:`edelweissmeshfree.particles.base.baseparticle.BaseParticle.getInterpolationVectorLinearizedAboutCenter`."""
+
         cdef np.ndarray G = np.zeros(len(self._nodes))
         cdef double[::1] Gview_ = G
-        self._marmotParticle.getAttachedPointInterpolationVector(&Gview_[0], &coordinates[0])
+        self._marmotParticle.getInterpolationVectorLinearizedAboutCenter(&Gview_[0], &coordinates[0])
         return G
 
     def assignKernelFunctions(self, list marmotMeshfreeKernelFunctionWrappers):

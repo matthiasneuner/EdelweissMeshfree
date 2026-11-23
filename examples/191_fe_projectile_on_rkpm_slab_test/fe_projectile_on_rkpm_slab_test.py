@@ -223,6 +223,7 @@ def holdTheSlab(model: MPMModel):
             {normal: 0.0, 2: 0.0},
             SUPPORT_PENALTY,
             constrain=VERTICES_ON_FACE[face],
+            interpolationLinearizedAboutCenter=True,
         )
     for setName, face, normal in [("slab_left", "xMin", 0), ("slab_front", "yMin", 1)]:
         model.constraints[f"symmetry_{setName}"] = ParticlePenaltyWeakDirichlet(
@@ -233,6 +234,7 @@ def holdTheSlab(model: MPMModel):
             {normal: 0.0},
             SUPPORT_PENALTY,
             constrain=VERTICES_ON_FACE[face],
+            interpolationLinearizedAboutCenter=True,
         )
 
 

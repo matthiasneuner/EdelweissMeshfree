@@ -199,7 +199,7 @@ def run_sim(floor: str):
         theModel.constraints.update(
             ParticleExplicitPenaltyCartesianBoundaryConstraintFactory(
                 "floor", 0.0, 1, theModel.surfaces["projectile_bottom"], "displacement", theModel,
-                penaltyParameter=PENALTY_PER_AREA * particleSize,
+                penaltyParameter=PENALTY_PER_AREA * particleSize, interpolationLinearizedAboutCenter=True,
             )
         )  # fmt: skip
     elif floor == "facets":

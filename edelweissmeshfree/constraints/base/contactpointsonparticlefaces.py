@@ -38,11 +38,11 @@ contact constraints of EdelweissFE, which pair them with a master surface of fin
 (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`) or with a discrete rigid body
 (:mod:`edelweissfe.constraints.surfacetodiscreterigidbodypenalty`).
 
-A face of a particle moves with its particle: the particle moves every point attached to it, a vertex or a point on a
-face, by :math:`\\Delta\\boldsymbol{x} = \\sum_B G_B(\\boldsymbol{x}) \\Delta\\boldsymbol{U}_B`, with the
-interpolation vector of an attached point
-(:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getAttachedPointInterpolationVector`), which is
-affine in :math:`\\boldsymbol{x}`. So a face stays flat if it is flat, and a point at fixed parametric coordinates
+A face of a particle moves with its particle: the particle moves every point of its own, a vertex or a point on a
+face, by :math:`\\Delta\\boldsymbol{x} = \\sum_B G_B(\\boldsymbol{x}) \\Delta\\boldsymbol{U}_B`, with its
+shape functions linearized about its center
+(:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getInterpolationVectorLinearizedAboutCenter`), which
+are affine in :math:`\\boldsymbol{x}`. So a face stays flat if it is flat, and a point at fixed parametric coordinates
 :math:`\\xi_q` of the face stays there. Such a point is a contact point: it sits at
 :math:`\\boldsymbol{x}_q = \\sum_a N_a(\\xi_q) \\boldsymbol{x}_a` (the face's vertices :math:`\\boldsymbol{x}_a`),
 moves with :math:`G(\\boldsymbol{x}_q)`, and stands for the area :math:`J_q w_q` of its share of the face. Its
@@ -273,7 +273,7 @@ class ContactPointsOnParticleFaces(ContactPoints):
         self._coordinatesOfLocated = self._coordinatesOfAllPoints()[points] if len(points) else np.zeros((0, self.nDim))
         columns = [localNodesOfParticle[particle] for particle in particleOfPoint]
         values = [
-            self._particles[particle].getAttachedPointInterpolationVector(x).ravel()
+            self._particles[particle].getInterpolationVectorLinearizedAboutCenter(x).ravel()
             for particle, x in zip(particleOfPoint, self._coordinatesOfLocated)
         ]
         counts = np.array([len(c) for c in columns], dtype=np.intp)

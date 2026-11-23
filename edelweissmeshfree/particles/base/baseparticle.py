@@ -41,9 +41,8 @@ Implementing your own particles can be done easily by subclassing from
 the abstract base class :class:`~BaseParticle`.
 
 In an explicit analysis, the methods of a particle are called in an order its implementation relies on (advance,
-accept twice, reconnect, then the force and the momentum, the lumped inertia and damping, and the bound of the stable
-time increment last); the calls and the contracts that follow from their order are written down once, in Marmot's
-documentation: `the explicit life cycle of a particle
+accept twice, reconnect, then the force and the momentum, the lumped inertia and damping); the calls and the contracts
+that follow from their order are written down once, in Marmot's documentation: `the explicit life cycle of a particle
 <https://materialmodelingtoolbox.github.io/Marmot/pages/features/meshfreeparticles.html#explicit-life-cycle-of-a-particle>`_.
 """
 
@@ -412,16 +411,15 @@ class BaseParticle(BaseNodeCouplingEntity):
         """
 
     @abstractmethod
-    def computeTangentOfTheCurrentState(
+    def assembleStiffness(
         self,
         K: np.ndarray,
     ):
-        """Explicit dynamics: the tangent of the internal force with respect to the degrees of freedom of the kernel
-        functions currently assigned, at the current state (a zero increment, evaluated on a copy of the state). The
-        state variables are left unchanged; the response the material point keeps is overwritten, so in an explicit
-        increment it is called after :meth:`computePhysicsKernelsExplicit`, which reads it. Without inertia. The exact stiffness, e.g. to check the bound of
-        :meth:`computeBoundOfAbsoluteStiffnessTimes` against, which the critical time step of the particles is
-        bounded with.
+        """Explicit dynamics: add the stiffness of the particle, the tangent of the internal force with respect to the
+        degrees of freedom of the kernel functions currently assigned, without inertia, of a zero increment of the
+        last accepted configuration and the working state: after an accept, the stiffness of the accepted state. It
+        leaves the particle as it was found. The stiffness the bound of :meth:`addBoundOfAbsoluteStiffnessTimes`
+        bounds, e.g. to check that bound against.
 
         The zero increment is taken over a unit time increment, at time zero: the time increment is only positive, as a
         material may divide by it, and the tangent of a rate-independent material does not depend on it. For a
@@ -431,23 +429,20 @@ class BaseParticle(BaseNodeCouplingEntity):
         Parameters
         ----------
         K
-            The tangent to define, column-major, ``nDof x nDof``.
+            The stiffness to augment, column-major, ``nDof x nDof``.
         """
 
     @abstractmethod
-    def computeBoundOfAbsoluteStiffnessTimes(
+    def addBoundOfAbsoluteStiffnessTimes(
         self,
         W: np.ndarray,
         bound: np.ndarray,
     ):
         """Explicit dynamics: add an upper bound of :math:`|\\boldsymbol{K}|\\, \\boldsymbol{W}`, the absolute value of
-        the stiffness at the current state (the tangent of :meth:`computeTangentOfTheCurrentState`, without inertia,
-        of a zero increment over a unit time increment, see there) times nonnegative weights. It leaves the state
-        variables unchanged and overwrites the response the material point keeps, so in an explicit increment it is
-        called after :meth:`computePhysicsKernelsExplicit`, which reads it (the order of the calls: the explicit life
-        cycle of a particle, see the module documentation). The stiffness itself is not assembled: the bound
-        costs as much as the nodes, the stiffness as their square. It is what the critical time step of the particles
-        is estimated with
+        the stiffness of :meth:`assembleStiffness` (see there for the state it is of), times nonnegative weights. It
+        leaves the particle as it was found. The stiffness itself is not assembled: the bound costs as much as the
+        nodes, the stiffness as their square. It is what the critical time step of the particles is estimated with,
+        after the accept of an increment
         (:meth:`~edelweissmeshfree.models.mpmdiscretesystem.MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`).
 
         Parameters
@@ -477,7 +472,15 @@ class BaseParticle(BaseNodeCouplingEntity):
 
     @abstractmethod
     def getInterpolationVector(self, coordinate: np.ndarray) -> np.ndarray:
-        """Get the interpolation vector for a given global coordinate.
+        """The shape functions of the assigned kernel functions, evaluated exactly at an arbitrary location,
+        :math:`N_B(\\boldsymbol{x})`: e.g. where a field of the kernel functions is wanted somewhere in the body. Not the
+        particle's own interpolation at its own points (its center, a vertex, a face center), which is
+        :meth:`getInterpolationVectorLinearizedAboutCenter`; away from the center the two differ.
+
+        Parameters
+        ----------
+        coordinate
+            The location.
 
         Returns
         -------
@@ -486,17 +489,20 @@ class BaseParticle(BaseNodeCouplingEntity):
         """
 
     @abstractmethod
-    def getAttachedPointInterpolationVector(self, coordinate: np.ndarray) -> np.ndarray:
-        r"""Get the interpolation vector of a point attached to the particle (its center, a vertex, a face center):
-        the coefficients :math:`G_B` with which the particle moves that point in its next increment,
-        :math:`\Delta\boldsymbol{x} = \sum_B G_B \Delta\boldsymbol{U}_B`.
+    def getInterpolationVectorLinearizedAboutCenter(self, coordinate: np.ndarray) -> np.ndarray:
+        r"""The shape functions linearized about the center of the particle,
+        :math:`G_B(\boldsymbol{x}) = N_B(\boldsymbol{x}_c) + \nabla N_B(\boldsymbol{x}_c) \cdot (\boldsymbol{x} -
+        \boldsymbol{x}_c)`: the particle's own interpolation at its own points.
 
-        The particle moves as a whole, its center with the shape functions there and its domain with the homogeneous
-        deformation gradient from the (smoothed) shape function gradients,
-        :math:`G_B = N_B(\boldsymbol{x}_c) + \nabla N_B \cdot (\boldsymbol{x} - \boldsymbol{x}_c)`. Away from the
-        center this is not :meth:`getInterpolationVector` at the point. A constraint that measures a point of the
-        particle where the particle puts it (a support or a contact on a vertex) must distribute its force with this
-        vector: then the force is the transpose of the kinematics and a penalty is conservative.
+        A particle knows every field it carries only by its value and its (smoothed) gradient at its center, so at a
+        point of its own (its center, a vertex, a face center) its interpolation of any field is this linearization:
+        for the displacement, the motion of the point in the next increment,
+        :math:`\Delta\boldsymbol{x} = \sum_B G_B \Delta\boldsymbol{U}_B` (the particle moves as a whole, its center
+        with the shape functions there and its domain with the homogeneous deformation gradient); for a nonlocal field
+        or a temperature, the value the particle carries at the point. Away from the center it is not
+        :meth:`getInterpolationVector` at the point, which is exact at an arbitrary location. A constraint that
+        measures a field at a point of the particle and distributes its force there with this vector is symmetric and
+        conservative. The vector sums to one.
 
         Parameters
         ----------

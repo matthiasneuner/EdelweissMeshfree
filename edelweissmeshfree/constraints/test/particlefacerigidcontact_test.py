@@ -36,8 +36,8 @@
 """The contact of particle faces with a discrete rigid body: EdelweissFE's rigid-body contact
 (:mod:`edelweissfe.constraints.surfacetodiscreterigidbodypenalty`) with
 :class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`, the same contact
-points as against a deformable master. The particles are stand-ins with the interpolation vector of an attached point
-of a real particle (affine in the point); the rigid body is a box whose top face is the support."""
+points as against a deformable master. The particles are stand-ins with the interpolation of a real particle
+linearized about its center (affine in the point); the rigid body is a box whose top face is the support."""
 
 import os
 

@@ -36,7 +36,7 @@
 """The contact of particle faces with a master surface of finite element faces: EdelweissFE's contact constraint
 (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`) with
 :class:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces`. The particles
-are stand-ins with the interpolation vector of an attached point of a real particle (affine in the point); the master
+are stand-ins with the interpolation of a real particle linearized about its center (affine in the point); the master
 is a block of plane strain elements with its generated contact facets."""
 
 import numpy as np

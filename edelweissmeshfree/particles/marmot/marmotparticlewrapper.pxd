@@ -134,7 +134,7 @@ cdef extern from "Marmot/MarmotParticle.h":
 
         void getInterpolationVector( double* N, const double* coordinates) except +
 
-        void getAttachedPointInterpolationVector( double* G, const double* coordinates) except +
+        void getInterpolationVectorLinearizedAboutCenter( double* G, const double* coordinates) except +
 
         int getNumberOfRequiredStateVars() except +
 
@@ -178,11 +178,17 @@ cdef extern from "Marmot/MarmotParticle.h":
 
         void computeLumpedDamping ( double* cLumped) except +
 
-        void computeBoundOfAbsoluteStiffnessTimes( const double* columnWeights,
-                                                   int nColumns,
-                                                   double* bound,
-                                                   double timeNew,
-                                                   double dT) except +
+# The host's visitors of the stiffness the particle describes, outside the particle: its assembly and the bound of
+# its absolute value.
+cdef extern from "Marmot/MarmotParticleStiffnessVisitors.h" namespace "Marmot::Discretizations::Meshfree" nogil:
+    void assembleStiffness( MarmotParticle& particle, double* K, double timeNew, double dT) except +
+
+    void addBoundOfAbsoluteStiffnessTimes( MarmotParticle& particle,
+                                           const double* columnWeights,
+                                           int nColumns,
+                                           double* bound,
+                                           double timeNew,
+                                           double dT) except +
 
 
 

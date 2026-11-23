@@ -24,9 +24,10 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
 
     **In an implicit analysis**, it penalizes the difference between the increment of the field at the constrained
     points, :math:`\boldsymbol{N} \cdot \Delta\boldsymbol{U}`, and the prescribed increment, the change of
-    ``prescribedStepDelta`` times ``f_t`` over the increment. The shape functions :math:`\boldsymbol{N}` at the point
-    both measure the increment and distribute the force: the stiffness :math:`k\,\boldsymbol{N}\boldsymbol{N}^\mathsf{T}`
-    is symmetric.
+    ``prescribedStepDelta`` times ``f_t`` over the increment. The same vector measures the increment and distributes the
+    force, so the stiffness is symmetric: the shape functions at the point, :math:`\boldsymbol{N}` (the default), or,
+    with ``interpolationLinearizedAboutCenter``, the particle's interpolation linearized about its center,
+    :math:`\boldsymbol{G}`, its own view of the point.
 
     **In an explicit analysis**, the nodes of the kernel functions carry no increment to constrain: the particles have
     moved when the constraints are evaluated. There the constraint holds displacement components at zero, as a
@@ -39,15 +40,15 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
 
     for every constrained component :math:`i`, with :math:`\boldsymbol{X}` the position of the point when the
     constraint was created. The point (the center or a vertex of the particle) is where the particle has put it: it
-    moves with the particle, in an increment by :math:`\boldsymbol{G} \cdot \Delta\boldsymbol{U}`, with the particle's
-    interpolation vector of an attached point
-    (:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getAttachedPointInterpolationVector`), which
-    away from the center is not the vector of the shape functions at the point. The force is distributed over the
-    nodes of the kernel functions with the same :math:`\boldsymbol{G}`, the transpose of the point's motion: the
-    penalty stiffness :math:`k\,\boldsymbol{G}\boldsymbol{G}^\mathsf{T}` is symmetric, and the support does no work
-    over a closed cycle of motion. (Distributed with the shape functions at the point, the stiffness would be
-    :math:`k\,\boldsymbol{N}\boldsymbol{G}^\mathsf{T}`, unsymmetric: it pumps energy into the material next to the
-    support once that has softened.) The force acts on both sides of :math:`X_i`. It acts in an explicit analysis
+    moves with the particle, in an increment by :math:`\boldsymbol{G} \cdot \Delta\boldsymbol{U}`. By default the
+    force is distributed over the nodes of the kernel functions with the shape functions at the point,
+    :math:`\boldsymbol{N}`, which away from the center is not :math:`\boldsymbol{G}`: the penalty stiffness
+    :math:`k\,\boldsymbol{N}\boldsymbol{G}^\mathsf{T}` is unsymmetric, does work over a closed cycle of motion, and can
+    feed energy into the material next to the support once that has softened. With
+    ``interpolationLinearizedAboutCenter`` it is distributed with :math:`\boldsymbol{G}`, the transpose of the point's
+    motion: the stiffness :math:`k\,\boldsymbol{G}\boldsymbol{G}^\mathsf{T}` is symmetric and the support conservative
+    (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`).
+    The force acts on both sides of :math:`X_i`. It acts in an explicit analysis
     (:attr:`actsInExplicitAnalysis`) only if it constrains the displacement and every prescribed change is zero: an
     explicit analysis prescribes motion through velocities, not through penalized displacements.
 
@@ -74,7 +75,13 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         The penalty parameter value.
     constrain
         Either constrain the center of the particle or a list of vertex indices for particles with multiple vertices.
-        If "center", the center of the particle is constrained. If a list, the vertices at the given indices are constrained.
+        If "center", the center of the particle is constrained. If a list, the vertices at the given indices are
+        constrained; it must name at least one vertex.
+    interpolationLinearizedAboutCenter
+        False (default): measure the field at the point and distribute the force there with the shape functions at
+        the point, N. True: with the particle's interpolation linearized about its center, G, with which the particle
+        moves its own points (symmetric and conservative). See
+        :meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`.
     """
 
     #: Carries nothing from one increment to the next: the positions the points are held at in an explicit analysis
@@ -90,11 +97,13 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         prescribedStepDelta: dict,
         penaltyParameter: float,
         constrain: str | list[int] = "center",
+        interpolationLinearizedAboutCenter: bool = False,
         **kwargs,
     ):
         self._name = name
+        self.interpolationLinearizedAboutCenter = interpolationLinearizedAboutCenter
         self._model = model
-        self._constrainedParticles = constrainedParticles
+        self._constrainedParticles = list(constrainedParticles)
         self._field = field
         self._prescribedStepDelta = prescribedStepDelta
         self._fieldSize = getFieldSize(self._field, model.domainSize)
@@ -108,10 +117,9 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         if constrain == "center":
             self._constrainVertices = None
         else:
-            if not isinstance(constrain, list):
-                raise ValueError("Constrain must be 'center' or a list of vertex indices.")
-            if len(constrain) > 0 and not all(isinstance(i, int) for i in constrain):
-                raise ValueError("Constrain must be 'center' or a list of vertex indices.")
+            # an empty list would constrain nothing, and is not taken for "center" either
+            if not isinstance(constrain, list) or not constrain or not all(isinstance(i, int) for i in constrain):
+                raise ValueError("Constrain must be 'center' or a list of vertex indices that is not empty.")
             self._constrainVertices = constrain
 
         self.penaltyForce = np.zeros(self._fieldSize)
@@ -221,12 +229,12 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             for p, nodeIdcs in zip(self._constrainedParticles, self._localNodesOfParticle):
                 for constrainedCoordinate in self._constrainedCoordinatesOf(p):
 
-                    N = p.getInterpolationVector(constrainedCoordinate)
+                    interpolation = self.interpolationVectorAtPointOf(p, constrainedCoordinate)
 
-                    mpValue = N @ dU_j[nodeIdcs]
+                    mpValue = interpolation @ dU_j[nodeIdcs]
 
                     P_i[nodeIdcs] += (
-                        N
+                        interpolation
                         * self._penaltyParameter
                         * (
                             mpValue
@@ -237,7 +245,7 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
                             )
                         )
                     )
-                    K_ij[np.ix_(nodeIdcs, nodeIdcs)] += np.outer(N, N) * self._penaltyParameter
+                    K_ij[np.ix_(nodeIdcs, nodeIdcs)] += np.outer(interpolation, interpolation) * self._penaltyParameter
 
             self.penaltyForce[i] = np.sum(P_i)
 
@@ -245,9 +253,9 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         """Add the residual contribution of the support in an explicit analysis: the negative of the forces that hold
         the constrained components of the constrained points at their initial positions, measured where the points are
         now (see the class documentation). Particle by particle, the forces of its constrained points
-        :math:`\\boldsymbol{f}_p` reach the nodes of its kernel functions as one product with the interpolation vectors
-        of the points, :math:`\\boldsymbol{G}^\\mathsf{T} \\boldsymbol{f}`
-        (:func:`~edelweissmeshfree.constraints.base.pointsofparticles.addForcesOnPointsOfParticle`).
+        :math:`\\boldsymbol{f}_p` reach the nodes of its kernel functions as one product with the vectors of the
+        points, :math:`\\boldsymbol{I}^\\mathsf{T} \\boldsymbol{f}` (:math:`\\boldsymbol{N}` or :math:`\\boldsymbol{G}`, see
+        the class documentation; :func:`~edelweissmeshfree.constraints.base.pointsofparticles.addForcesOnPointsOfParticle`).
 
         Parameters
         ----------
@@ -264,14 +272,14 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
         components = list(self._prescribedStepDelta)
         PAtNodes = P.reshape(-1, self._fieldSize)
 
-        for localNodes, initialCoordinates, (coordinates, G) in zip(
+        for localNodes, initialCoordinates, (coordinates, interpolations) in zip(
             self._localNodesOfParticle,
             self._initialCoordinatesOfConstrainedPoints,
             self._constrainedPointsAndTheirInterpolations(),
         ):
             # the forces that pull the constrained components of the points back to their initial positions
             forces = -self._penaltyParameter * (coordinates[:, components] - initialCoordinates[:, components])
-            addForcesOnPointsOfParticle(PAtNodes, localNodes, G, forces, components)
+            addForcesOnPointsOfParticle(PAtNodes, localNodes, interpolations, forces, components)
 
         for i in self._prescribedStepDelta:
             self.penaltyForce[i] = np.sum(P[i :: self._fieldSize])
@@ -281,12 +289,11 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
     ):
         """Add the row sums of the absolute value of the stiffness of the support in an explicit analysis, weighted by
         column: a spring of the penalty stiffness :math:`k` along every constrained component :math:`i` of every
-        constrained point :math:`p`, moved by its interpolation vector :math:`\\boldsymbol{G}_p`, as in
-        :meth:`computeKernelsExplicit` (the same points and interpolation vectors,
-        :meth:`_constrainedPointsAndTheirInterpolations`), so :math:`b_{Bi} \\mathrel{+}= k \\sum_p |G_{pB}| \\sum_C
-        |G_{pC}|\\, w_{Ci}`: the bound of every penalty spring
-        (:func:`~edelweissfe.constraints.base.penaltysprings.addBoundOfAbsoluteStiffnessOfSprings`), with the
-        interpolation vectors of all points as one matrix over the nodes of the constraint.
+        constrained point :math:`p`, with the vector :math:`\\boldsymbol{I}_p` of the point, as in
+        :meth:`computeKernelsExplicit` (the same points and vectors, :meth:`_constrainedPointsAndTheirInterpolations`),
+        so :math:`b_{Bi} \\mathrel{+}= k \\sum_p |I_{pB}| \\sum_C |I_{pC}|\\, w_{Ci}`: the bound of every penalty
+        spring (:func:`~edelweissfe.constraints.base.penaltysprings.addBoundOfAbsoluteStiffnessOfSprings`), with the
+        vectors of all points as one matrix over the nodes of the constraint.
 
         Parameters
         ----------
@@ -302,17 +309,17 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             The current time step; unused.
         """
 
-        interpolations = [G for _, G in self._constrainedPointsAndTheirInterpolations()]
+        interpolations = [vectors for _, vectors in self._constrainedPointsAndTheirInterpolations()]
         if not interpolations:
             return
 
         # all points of all particles, one row each, over the nodes of the constraint
-        nPointsOf = [len(G) for G in interpolations]
+        nPointsOf = [len(vectors) for vectors in interpolations]
         interpolationOfAllPoints = csr_matrix(
             (
-                np.concatenate([G.ravel() for G in interpolations]),
+                np.concatenate([vectors.ravel() for vectors in interpolations]),
                 np.concatenate(
-                    [np.tile(nodes, len(G)) for nodes, G in zip(self._localNodesOfParticle, interpolations)]
+                    [np.tile(nodes, len(vectors)) for nodes, vectors in zip(self._localNodesOfParticle, interpolations)]
                 ),
                 np.concatenate(([0], np.cumsum(np.repeat([len(n) for n in self._localNodesOfParticle], nPointsOf)))),
             ),
@@ -331,21 +338,22 @@ class ParticlePenaltyWeakDirichlet(MPMConstraintBase):
             )
 
     def _constrainedPointsAndTheirInterpolations(self) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Per constrained particle, where its constrained points are now, and the interpolation vectors with which
-        the particle moves them, one row per point: what the force (:meth:`computeKernelsExplicit`) and the bound of
-        the stiffness (:meth:`computeBoundOfAbsoluteStiffnessTimes`) of the explicit support are made from.
+        """Per constrained particle, where its constrained points are now, and the vectors the force there is
+        distributed with (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`),
+        one row per point: what the force (:meth:`computeKernelsExplicit`) and the bound of the stiffness
+        (:meth:`computeBoundOfAbsoluteStiffnessTimes`) of the explicit support are made from.
 
         Returns
         -------
         list[tuple[numpy.ndarray, numpy.ndarray]]
-            The coordinates (``nPoints x nDim``) and the interpolation vectors (``nPoints x nNodesOfTheParticle``).
+            The coordinates (``nPoints x nDim``) and the vectors (``nPoints x nNodesOfTheParticle``).
         """
 
         pointsAndInterpolations = []
         for p in self._constrainedParticles:
             coordinates = self._constrainedCoordinatesOf(p)
-            G = np.array([p.getAttachedPointInterpolationVector(x) for x in coordinates])
-            pointsAndInterpolations.append((coordinates, G))
+            interpolations = np.array([self.interpolationVectorAtPointOf(p, x) for x in coordinates])
+            pointsAndInterpolations.append((coordinates, interpolations))
         return pointsAndInterpolations
 
     def _constrainedCoordinatesOf(self, particle: BaseParticle) -> np.ndarray:

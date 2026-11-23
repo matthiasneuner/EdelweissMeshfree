@@ -37,12 +37,13 @@ particles sit in its block, and how a force on a point of a particle reaches tho
 
 A constraint that measures a point of a particle -- a vertex held by a support, a vertex in contact -- acts on the nodes
 of the particle's kernel functions, which change as the particle moves. Its block holds each of these nodes once
-(:func:`locateTheNodesOfParticles`). A force on the point reaches the nodes with the interpolation vector with which
-the particle moves the point, :math:`G_B`
-(:meth:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.getAttachedPointInterpolationVector`), the
-transpose of the point's motion, so that a penalty on the point has a symmetric stiffness and does no work over a
-closed cycle (:func:`addForcesOnPointsOfParticle`); the explicit solver bounds that stiffness for its critical time
-step (:func:`addBoundOfAbsoluteStiffnessOfPointsOfParticle`, the one bound of penalty springs of EdelweissFE,
+(:func:`locateTheNodesOfParticles`). A force on the point reaches the nodes with the vector the constraint chose for
+the point (:func:`addForcesOnPointsOfParticle`;
+:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`): the
+shape functions at the point, or the particle's interpolation linearized about its center, with which it moves the
+point, the transpose of the point's motion, so that a penalty on the point has a symmetric stiffness and does no work
+over a closed cycle. The explicit solver bounds that stiffness for its critical time step
+(:func:`addBoundOfAbsoluteStiffnessOfPointsOfParticle`, the one bound of penalty springs of EdelweissFE,
 :mod:`edelweissfe.constraints.base.penaltysprings`). A penalty constraint gives its springs on the points of a particle
 as :class:`SpringsOnPointsOfParticle`, from one method for its force and its bound, so that the two cannot drift
 apart. The constraints of :mod:`edelweissmeshfree.constraints.explicit` and
@@ -79,18 +80,27 @@ def locateTheNodesOfParticles(kernelFunctionsOfParticles: Iterable[list], localI
         Per particle, where the nodes of its kernel functions sit in the block, in the order of its kernel functions.
     """
 
+    # indices also for a particle without kernel functions: an empty array without a type would be one of floats
     return [
-        np.array([localIndexOfNode.setdefault(kernelFunction.node, len(localIndexOfNode)) for kernelFunction in kfs])
+        np.array(
+            [localIndexOfNode.setdefault(kernelFunction.node, len(localIndexOfNode)) for kernelFunction in kfs],
+            dtype=np.intp,
+        )
         for kfs in kernelFunctionsOfParticles
     ]
 
 
 def addForcesOnPointsOfParticle(
-    PAtNodes: np.ndarray, localNodes: np.ndarray, G: np.ndarray, forces: np.ndarray, components: list[int] = None
+    PAtNodes: np.ndarray,
+    localNodes: np.ndarray,
+    interpolations: np.ndarray,
+    forces: np.ndarray,
+    components: list[int] = None,
 ):
     """Add the residual contribution of forces on points of one particle, the negative of the forces on the nodes of its
-    kernel functions: :math:`\\boldsymbol{P}_B \\mathrel{-}= \\sum_p G_{pB}\\, \\boldsymbol{f}_p`, with the interpolation
-    vector :math:`G_{pB}` with which the particle moves the point :math:`p`.
+    kernel functions: :math:`\\boldsymbol{P}_B \\mathrel{-}= \\sum_p I_{pB}\\, \\boldsymbol{f}_p`, with the vector
+    :math:`I_{pB}` the constraint distributes the force on the point :math:`p` with
+    (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`).
 
     Parameters
     ----------
@@ -99,8 +109,8 @@ def addForcesOnPointsOfParticle(
     localNodes
         Where the nodes of the particle's kernel functions sit in the block (:func:`locateTheNodesOfParticles`). They
         are distinct, so the fancy indexing drops no contribution.
-    G
-        The interpolation vectors of the points, one row per point: ``nPoints x nNodesOfTheParticle``.
+    interpolations
+        The vectors of the points, one row per point: ``nPoints x nNodesOfTheParticle``.
     forces
         The forces on the points, one row per point: ``nPoints x fieldSize``, or ``nPoints x len(components)``.
     components
@@ -108,9 +118,9 @@ def addForcesOnPointsOfParticle(
     """
 
     if components is None:
-        PAtNodes[localNodes] -= G.T @ forces
+        PAtNodes[localNodes] -= interpolations.T @ forces
     else:
-        PAtNodes[np.ix_(localNodes, components)] -= G.T @ forces
+        PAtNodes[np.ix_(localNodes, components)] -= interpolations.T @ forces
 
 
 @dataclass(frozen=True)
@@ -119,7 +129,9 @@ class SpringsOnPointsOfParticle:
     :math:`\\boldsymbol{n}_p` with the force :math:`f_p`, which reaches the nodes with the interpolation vector of the
     point, :math:`\\boldsymbol{f}_p = f_p \\boldsymbol{n}_p` in :func:`addForcesOnPointsOfParticle`."""
 
-    #: The interpolation vectors of the points of the springs, one row per spring: ``nSprings x nNodesOfTheParticle``.
+    #: The vectors of the points of the springs, one row per spring: ``nSprings x nNodesOfTheParticle``, those the
+    #: constraint measures and distributes with
+    #: (:meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`).
     interpolations: np.ndarray
     #: The unit direction of each spring: ``nSprings x fieldSize``.
     directions: np.ndarray
@@ -135,12 +147,13 @@ def addBoundOfAbsoluteStiffnessOfPointsOfParticle(
     """Add the row sums of the absolute value of the stiffness of penalty springs on points of one particle, weighted
     by column (see :meth:`~edelweissfe.constraints.base.constraintbase.ConstraintBase.computeBoundOfAbsoluteStiffnessTimes`).
     A spring of stiffness :math:`k_p` on the point :math:`p` along the unit direction :math:`\\boldsymbol{n}_p` has the
-    stiffness :math:`k_p\\, \\boldsymbol{w}_p \\otimes \\boldsymbol{w}_p` with :math:`\\boldsymbol{w}_p = G_p
-    \\otimes \\boldsymbol{n}_p`, so
+    stiffness :math:`k_p\\, \\boldsymbol{w}_p \\otimes \\boldsymbol{w}_p` with :math:`\\boldsymbol{w}_p = I_p
+    \\otimes \\boldsymbol{n}_p` and the vector :math:`I_p` of the point (:attr:`SpringsOnPointsOfParticle.interpolations`),
+    so
 
     .. math::
 
-        b_{Bi} \\mathrel{+}= \\sum_p |k_p|\\, |G_{pB}|\\, |n_{pi}| \\sum_{C,j} |G_{pC}|\\, |n_{pj}|\\, w_{Cj} ,
+        b_{Bi} \\mathrel{+}= \\sum_p |k_p|\\, |I_{pB}|\\, |n_{pi}| \\sum_{C,j} |I_{pC}|\\, |n_{pj}|\\, w_{Cj} ,
 
     the bound of every penalty spring
     (:func:`~edelweissfe.constraints.base.penaltysprings.addBoundOfAbsoluteStiffnessOfSprings`), over the nodes of the

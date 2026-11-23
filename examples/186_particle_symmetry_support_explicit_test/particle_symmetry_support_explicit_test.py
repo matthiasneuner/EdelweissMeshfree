@@ -47,7 +47,8 @@ close to the limit of the time increment: the critical time step of the half pro
 particles' own, and its time increment slightly below the whole projectile's, so both run to the same time rather
 than for the same number of increments. A refinement study found it shrinking with the particle size, 0.28, 0.090 and 0.033
 for particles of 10, 5 and 2.5 mm, when the support still distributed its force with the shape functions at the
-vertices; it now distributes it with the vector that moves the vertices, which makes it conservative.
+vertices; here the wall and the support measure and distribute with the particles' interpolation linearized about their
+centers (``interpolationLinearizedAboutCenter``), the vector that moves the vertices, which makes them conservative.
 """
 
 import argparse
@@ -158,7 +159,7 @@ def run_sim(model: str) -> np.ndarray:
     theModel.constraints.update(
         ParticleExplicitPenaltyCartesianBoundaryConstraintFactory(
             "wall", 0.0, 1, theModel.particleSets["projectile_bottom"], "displacement", theModel, location="vertex",
-            vertexIDs=[0, 1, 2, 3], penaltyParameter=PENALTY,
+            vertexIDs=[0, 1, 2, 3], penaltyParameter=PENALTY, interpolationLinearizedAboutCenter=True,
         )
     )  # fmt: skip
 
@@ -166,7 +167,7 @@ def run_sim(model: str) -> np.ndarray:
         # the vertices 0 and 3 of a particle in the left column are on the symmetry plane x = 0
         theModel.constraints["symmetry"] = ParticlePenaltyWeakDirichlet(
             "symmetry", theModel, list(theModel.particleSets["projectile_left"]), "displacement", {0: 0.0}, SUPPORT_PENALTY,
-            constrain=[0, 3],
+            constrain=[0, 3], interpolationLinearizedAboutCenter=True,
         )  # fmt: skip
 
     theModel.prepareYourself(theJournal)

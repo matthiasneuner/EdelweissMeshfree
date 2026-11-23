@@ -118,7 +118,9 @@ def test_the_rows_of_a_penalty_support_added_to_the_particles_bound_the_exact_ei
 
     model = particlePlate("DisplacementSQCNIxNSNI/PlaneStrain/Quad", 2.2, 3)
     leftColumn = [p for p in model.particles.values() if p.getCenterCoordinates()[0] < 10.0]
-    support = ParticlePenaltyWeakDirichlet("support", model, leftColumn, "displacement", {0: 0.0}, penalty, [0, 3])
+    support = ParticlePenaltyWeakDirichlet(
+        "support", model, leftColumn, "displacement", {0: 0.0}, penalty, [0, 3], interpolationLinearizedAboutCenter=True
+    )
     model.constraints["support"] = support
     model.updateConnectivity()
     system = model.buildDiscreteSystem()
@@ -135,15 +137,15 @@ def test_the_rows_of_a_penalty_support_added_to_the_particles_bound_the_exact_ei
     # the exact stiffness: the particles' tangents and the support's springs k G G^T on the held component
     K = np.zeros((len(M), len(M)))
     for particle in system.particles:
-        tangent = np.zeros(particle.nDof**2)
-        particle.computeTangentOfTheCurrentState(tangent)
+        stiffness = np.zeros(particle.nDof**2)
+        particle.assembleStiffness(stiffness)
         indices = np.asarray(system.locations.ofEntity[particle])
-        K[np.ix_(indices, indices)] += tangent.reshape(particle.nDof, particle.nDof, order="F")
+        K[np.ix_(indices, indices)] += stiffness.reshape(particle.nDof, particle.nDof, order="F")
     ofTheParticles = K.copy()
     indices = np.asarray(system.locations[support])
     for particle, localNodes in zip(leftColumn, support._localNodesOfParticle):
         for x in particle.getVertexCoordinates()[[0, 3]]:
-            G = particle.getAttachedPointInterpolationVector(x).ravel()
+            G = particle.getInterpolationVectorLinearizedAboutCenter(x).ravel()
             dofs = indices[2 * localNodes]
             K[np.ix_(dofs, dofs)] += penalty * np.outer(G, G)
 

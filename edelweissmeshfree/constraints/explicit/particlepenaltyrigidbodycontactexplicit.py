@@ -45,6 +45,11 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         If True, constraints are only activated when particles are within a certain proximity to the surface.
     proximityFactor
         Multiplier for the proximity distance threshold, based on particle size. Default is 2.
+    interpolationLinearizedAboutCenter
+        False (default): measure the field at the point and distribute the force there with the shape functions at
+        the point, N. True: with the particle's interpolation linearized about its center, G, with which the particle
+        moves its own points (symmetric and conservative). See
+        :meth:`~edelweissmeshfree.constraints.base.mpmconstraintbase.MPMConstraintBase.interpolationVectorAtPointOf`.
     """
 
     #: Carries nothing from one increment to the next.
@@ -63,8 +68,10 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
         penaltyParameter: float = 1e5,
         doProximityCheck: bool = True,
         proximityFactor: float = 2.0,
+        interpolationLinearizedAboutCenter: bool = False,
     ):
         self._name = name
+        self.interpolationLinearizedAboutCenter = interpolationLinearizedAboutCenter
         self._field = "displacement"
         self._fieldSize = getFieldSize(self._field, model.domainSize)
         # the nodes of the particle's kernel functions, and where they sit in the block (see updateConnectivity)
@@ -184,8 +191,8 @@ class ParticlePenaltyContactImplicitSurfaceConstraintExplicit(MPMExplicitConstra
             if norm > 1e-14:
                 directions[row] = gradient / norm
         return SpringsOnPointsOfParticle(
-            # the interpolation vector with which the particle moves the point: the force is its transpose
-            np.array([self._particle.getAttachedPointInterpolationVector(p).flatten() for p in inside]).reshape(
+            # the vector the force is distributed with (see interpolationVectorAtPointOf)
+            np.array([self.interpolationVectorAtPointOf(self._particle, p).flatten() for p in inside]).reshape(
                 (len(inside), len(self._localNodes))
             ),
             directions,
@@ -254,6 +261,7 @@ def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(
     penaltyParameter: float = 1e5,
     doProximityCheck: bool = True,
     proximityFactor: float = 2.0,
+    interpolationLinearizedAboutCenter: bool = False,
 ):
     """
     Factory function to create Explicit Penalty Contact constraints for collections.
@@ -283,6 +291,9 @@ def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(
         If True, constraints are only activated when particles are within a certain proximity to the surface.
     proximityFactor
         Multiplier for the proximity distance threshold, based on particle size. Default is 2.
+    interpolationLinearizedAboutCenter
+        Passed to every constraint: False (default) the shape functions at the point, N; True the particle's
+        interpolation linearized about its center, G.
     """
     constraints = dict()
 
@@ -301,6 +312,7 @@ def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(
                     penaltyParameter=penaltyParameter,
                     doProximityCheck=doProximityCheck,
                     proximityFactor=proximityFactor,
+                    interpolationLinearizedAboutCenter=interpolationLinearizedAboutCenter,
                 )
         return constraints
 
@@ -319,6 +331,7 @@ def ParticlePenaltyContactImplicitSurfaceConstraintExplicitFactory(
                 penaltyParameter,
                 doProximityCheck,
                 proximityFactor,
+                interpolationLinearizedAboutCenter=interpolationLinearizedAboutCenter,
             )
         return constraints
 
