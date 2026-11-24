@@ -17,7 +17,10 @@ from edelweissmeshfree.constraints.base.pointsofparticles import (
     locateTheNodesOfParticles,
 )
 from edelweissmeshfree.models.mpmmodel import MPMModel
-from edelweissmeshfree.particles.base.baseparticle import BaseParticle
+from edelweissmeshfree.particles.base.baseparticle import (
+    BaseParticle,
+    characteristicLength,
+)
 
 
 class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBase):
@@ -141,7 +144,7 @@ class ParticlePenaltyCartesianBoundaryConstraintExplicit(MPMExplicitConstraintBa
         self._doProximityCheck = doProximityCheck
 
         if self._doProximityCheck:
-            self._proximityDist = particle.getVolumeUndeformed() ** (1.0 / domainSize) * proximityFactor
+            self._proximityDist = characteristicLength(particle) * proximityFactor
 
     @property
     def name(self) -> str:

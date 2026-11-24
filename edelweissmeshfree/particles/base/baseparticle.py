@@ -86,6 +86,14 @@ class BaseParticle(BaseNodeCouplingEntity):
 
     @property
     @abstractmethod
+    def axisymmetric(self) -> bool:
+        """True if the particle lives in the section r-z of an axisymmetric model, the first coordinate the radius: its
+        volume, its mass and its forces are those of the ring it sweeps about the axis. An axisymmetric model holds
+        such particles only, any other model none (:meth:`~edelweissmeshfree.models.mpmmodel.MPMModel.prepareYourself`).
+        """
+
+    @property
+    @abstractmethod
     def ensightType(self) -> str:
         """The shape of the particle in Ensight Gold notation."""
 
@@ -605,3 +613,27 @@ class BaseParticle(BaseNodeCouplingEntity):
         restartData
             The state.
         """
+
+
+def characteristicLength(particle: BaseParticle) -> float:
+    """The size of a particle: the edge of the square (2D) or the cube (3D) of its measure in the model's own space.
+    That is its volume in 3D and its area in a plane model; an axisymmetric particle's volume is the volume of its ring,
+    :math:`V = 2 \\pi r_c A` (Pappus), so its measure in the section r-z is its area :math:`A = V / (2 \\pi r_c)`, with
+    the radius :math:`r_c` of its center.
+
+    Parameters
+    ----------
+    particle
+        The particle.
+
+    Returns
+    -------
+    float
+        The size, :math:`V^{1/n}` in a plane or a 3D model (:math:`n` the dimension), :math:`\\sqrt{A}` in an
+        axisymmetric one.
+    """
+
+    measure = particle.getVolumeUndeformed()
+    if particle.axisymmetric:
+        measure /= 2.0 * np.pi * particle.getCenterCoordinates()[0]
+    return measure ** (1.0 / particle.dimension)

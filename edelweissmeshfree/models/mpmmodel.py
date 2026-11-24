@@ -67,11 +67,15 @@ class MPMModel(FEModel):
     ----------
     dimension
         The dimension of the model.
+    axisymmetric
+        True if the model is the section r-z of a body of revolution, see
+        :attr:`~edelweissfe.models.femodel.FEModel.axisymmetric`; its particles must be axisymmetric ones
+        (:meth:`prepareYourself`).
     """
 
     identification = "MPMModel"
 
-    def __init__(self, dimension: int):
+    def __init__(self, dimension: int, axisymmetric: bool = False):
         self.cells = {}  #: The collection of Cells in the present model.
         self.cellSets = {}  #: The collection of CellSets in the present model.
         self.materialPoints = {}  #: The collection of MaterialPoints in the present model.
@@ -91,7 +95,7 @@ class MPMModel(FEModel):
         #: update of the connectivity, see :meth:`updateConnectivity`.
         self.vciManagers = []
 
-        super().__init__(dimension)
+        super().__init__(dimension, axisymmetric)
 
     def _populateNodeFieldVariablesFromCells(
         self,
@@ -170,17 +174,31 @@ class MPMModel(FEModel):
             mp.initializeYourself()
 
     def _prepareParticles(self, journal: Journal):
-        """Prepare elements for a simulation.
-        In detail, sections are assigned.
-
+        """Initialize the particles for a simulation, once they are known to integrate as the model does: an
+        axisymmetric model integrates over the rings about the axis, and so must its particles
+        (:attr:`~edelweissmeshfree.particles.base.baseparticle.BaseParticle.axisymmetric`), and a plane or a 3D model
+        holds no axisymmetric particle.
 
         Parameters
         ----------
         journal
             The journal instance.
+
+        Raises
+        ------
+        ValueError
+            If a particle is axisymmetric and the model is not, or vice versa.
         """
-        # for section in self.sections.values():
-        #     section.assignSectionPropertiesToModel(self)
+
+        otherSection = [p.number for p in self.particles.values() if p.axisymmetric != self.axisymmetric]
+        if otherSection:
+            kind = ("axisymmetric", "not axisymmetric") if self.axisymmetric else ("not axisymmetric", "axisymmetric")
+            raise ValueError(
+                f"The model is {kind[0]} (MPMModel(..., axisymmetric={self.axisymmetric})), but {len(otherSection)} "
+                f"of its particles are {kind[1]} (e.g. particle {otherSection[0]}): in an axisymmetric model every "
+                "particle integrates over the rings about the axis (Marmot's '<name>/Axisymmetric/<shape>' particles), "
+                "in any other model none does."
+            )
 
         for p in self.particles.values():
             p.initializeYourself()

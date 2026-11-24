@@ -46,6 +46,7 @@ from edelweissmeshfree.particlemanagers.base.baseparticlemanager import (
 from edelweissmeshfree.particlemanagers.binsofkernelfunctions import (
     BinsOfKernelFunctions,
 )
+from edelweissmeshfree.particles.base.baseparticle import characteristicLength
 
 
 class KDBinOrganizedParticleManager(BaseParticleManager):
@@ -232,8 +233,7 @@ class KDBinOrganizedParticleManager(BaseParticleManager):
 
             if self._randomlyShiftPartliceShapeFunctions:
                 if isinstance(self._randomlyShiftPartliceShapeFunctions, float):
-                    particleVol = particle.getVolumeUndeformed()
-                    particleSize = particleVol ** (1.0 / self._dimension)
+                    particleSize = characteristicLength(particle)
 
                     randdisp = (
                         (np.random.rand(self._dimension) - 0.5)
