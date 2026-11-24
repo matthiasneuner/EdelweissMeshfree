@@ -56,6 +56,23 @@ For a constant pressure on a face, :math:`\\sum_q w_q J_q G(\\boldsymbol{x}_q) =
 rule that integrates a linear function exactly: one point at the face's center already delivers the resultant and its
 first moment, everything a particle with a homogeneous deformation can feel. Two points per edge (2 in 2D, 2 x 2 in
 3D) integrate the linearly varying gap of a tilted face exactly as well.
+
+A tie can also hold a scalar field of the particles -- the nonlocal field of gradient-enhanced particles -- equal to
+the one of the finite elements across it (:mod:`edelweissfe.constraints.surfacetodeformablesurfacepenalty`, *Tied
+scalar fields*). The nodes of the kernel functions carry the increment of the field, so the value of the field at a
+point is its value at the update (:meth:`ContactPointsOnParticleFaces.valuesOfAFieldAtTheOriginsOfLocatedPoints`) plus
+the increment interpolated with the point's vector. A particle knows its fields only by the value and the gradient at
+its center, the state of its material point, and moves its points with its interpolation linearized about the center:
+the field at a point of the particle is the value at the center plus the gradient times the offset of the point from
+the center,
+
+.. math::
+    \\bar{N}(\\boldsymbol{X}_q) = \\bar{N}_c + \\nabla_X \\bar{N}_c \\cdot (\\boldsymbol{X}_q - \\boldsymbol{X}_c) ,
+
+with the gradient in the undeformed configuration and the offset in the configuration the points are made in (the
+reference, as for their areas). With ``interpolationLinearizedAboutCenter`` it is exactly the value the increments
+interpolated with :math:`G` have added up to, increment after increment; with the shape functions at the point,
+:math:`N`, it differs from that sum by what :math:`N` and :math:`G` differ by, as the positions of the points do.
 """
 
 from collections.abc import Iterable
@@ -186,6 +203,10 @@ class ContactPointsOnParticleFaces(ContactPoints):
         self.nPoints = nFaces * nQuadraturePoints
         self._faceOfPoint = np.repeat(np.arange(nFaces), nQuadraturePoints)
         self.areas = (self._jacobians(self._coordinatesOfFaceVertices(vertices)) * weights).ravel()
+        #: The offset of every point from the center of its particle, in the configuration the points are made in, the
+        #: reference: where a particle's field is taken at the point (:meth:`valuesOfAFieldAtTheOriginsOfLocatedPoints`).
+        centers = np.array([particle.getCenterCoordinates() for particle in self._particles], dtype=float)
+        self._offsetsFromTheCenters = self._coordinatesOfAllPoints() - centers[self._particleOfFace[self._faceOfPoint]]
 
         self.locatePoints(np.zeros(0, dtype=int))
 
@@ -272,6 +293,7 @@ class ContactPointsOnParticleFaces(ContactPoints):
         """
 
         particleOfPoint = self._particleOfFace[self._faceOfPoint[points]]
+        self._locatedPoints, self._particleOfLocated = points, particleOfPoint
         particles = np.unique(particleOfPoint)
         localIndexOfNode = {}
         localNodesOfParticle = dict(
@@ -314,23 +336,57 @@ class ContactPointsOnParticleFaces(ContactPoints):
 
         return self._originsOfLocated
 
-    def displacementsOfLocatedPoints(self, U: np.ndarray, dU: np.ndarray) -> np.ndarray:
-        """:math:`C\\, \\Delta\\boldsymbol{U}`, the increment since the update.
+    def changesFromTheOriginsOfLocatedPoints(self, U: np.ndarray, dU: np.ndarray, nComponents: int) -> np.ndarray:
+        """:math:`C\\, \\Delta\\boldsymbol{u}`, the increment of a field since the update.
 
         Parameters
         ----------
         U
-            The solution of the slave part of the block; unused, the nodes of the kernel functions carry increments.
+            The field's solution of the slave part of the block; unused, the nodes of the kernel functions carry
+            increments.
         dU
-            The increment of the slave part of the block.
+            Its increment, node by node.
+        nComponents
+            The number of components of the field per node.
 
         Returns
         -------
         numpy.ndarray
-            The displacements, of shape (nLocated, nDim).
+            The changes, of shape (nLocated, number of components of the field).
         """
 
-        return self._interpolationMatrix @ dU.reshape((-1, self.nDim))
+        return self._interpolationMatrix @ dU.reshape((-1, nComponents))
+
+    def valuesOfAFieldAtTheOriginsOfLocatedPoints(self, field: str) -> np.ndarray:
+        """The values of a scalar field of the particles at the located points, at the update: the value at the center
+        of each point's particle plus its gradient times the offset of the point from the center (see the module
+        documentation), from the states ``<field>`` and ``<field> gradient`` of the particle (the nonlocal field
+        ``nonlocal damage`` of gradient-enhanced particles).
+
+        Parameters
+        ----------
+        field
+            The name of the field.
+
+        Returns
+        -------
+        numpy.ndarray
+            The values, of shape (nLocated,).
+        """
+
+        values, gradients = np.zeros(len(self._particles)), np.zeros((len(self._particles), self.nDim))
+        for p in np.unique(self._particleOfLocated):
+            particle = self._particles[p]
+            try:
+                values[p] = particle.getResultArray(field)[0]
+                gradients[p] = particle.getResultArray(field + " gradient")[: self.nDim]
+            except Exception as error:
+                raise ValueError(
+                    f"Particle {particle.number} has no state '{field}' and '{field} gradient', the value and the "
+                    f"gradient of the field at its center, at which a tie takes the field at its points."
+                ) from error
+        offsets = self._offsetsFromTheCenters[self._locatedPoints]
+        return values[self._particleOfLocated] + np.einsum("ad,ad->a", gradients[self._particleOfLocated], offsets)
 
     def addForceResidual(self, P: np.ndarray, points: np.ndarray, forces: np.ndarray, directions: np.ndarray):
         """Add :math:`C^T (f\\, \\boldsymbol{n})`: the forces of the springs at the given points, distributed over the
@@ -348,9 +404,9 @@ class ContactPointsOnParticleFaces(ContactPoints):
             The unit directions of their springs.
         """
 
-        forcesOnPoints = np.zeros((self._interpolationMatrix.shape[0], self.nDim))
+        forcesOnPoints = np.zeros((self._interpolationMatrix.shape[0], directions.shape[1]))
         forcesOnPoints[points] = forces[:, None] * directions
-        P.reshape((-1, self.nDim))[:] += self._interpolationMatrix.T @ forcesOnPoints
+        P.reshape((-1, directions.shape[1]))[:] += self._interpolationMatrix.T @ forcesOnPoints
 
     def interpolationMatrixOfLocatedPoints(self) -> csr_matrix:
         """The sparse matrix :math:`C` of the interpolation vectors of the located points
@@ -366,8 +422,8 @@ class ContactPointsOnParticleFaces(ContactPoints):
         return self._interpolationMatrix
 
     def interpolationOfLocatedPoint(self, k: int) -> tuple[np.ndarray, np.ndarray]:
-        """The degrees of freedom of the nodes of the kernel functions of a located point's particle, and its
-        interpolation vector over them.
+        """The positions of the nodes of the kernel functions of a located point's particle in the slave part of the
+        block, and its interpolation vector over them.
 
         Parameters
         ----------
@@ -377,12 +433,11 @@ class ContactPointsOnParticleFaces(ContactPoints):
         Returns
         -------
         tuple[numpy.ndarray, numpy.ndarray]
-            The degrees of freedom and the interpolation vector.
+            The positions of the nodes and the interpolation vector.
         """
 
         C = self._interpolationMatrix
-        nodes = C.indices[C.indptr[k] : C.indptr[k + 1]]
-        return (nodes[:, None] * self.nDim + np.arange(self.nDim)).ravel(), C.data[C.indptr[k] : C.indptr[k + 1]]
+        return C.indices[C.indptr[k] : C.indptr[k + 1]], C.data[C.indptr[k] : C.indptr[k + 1]]
 
     def searchLayout(self) -> dict[str, np.ndarray]:
         """The particles, their faces and the quadrature rule identify the contact points in a checkpoint.
