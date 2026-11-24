@@ -56,12 +56,30 @@ For a constant pressure on a face, :math:`\\sum_q w_q J_q G(\\boldsymbol{x}_q) =
 rule that integrates a linear function exactly: one point at the face's center already delivers the resultant and its
 first moment, everything a particle with a homogeneous deformation can feel. Two points per edge (2 in 2D, 2 x 2 in
 3D) integrate the linearly varying gap of a tilted face exactly as well.
+
+**The area of a point** is measured as the model integrates, when a constraint takes the points
+(:meth:`ContactPointsOnParticleFaces.measureTheAreasAsIn`, with EdelweissFE's
+:func:`~edelweissfe.constraints.base.contactpoints.areasOfContactPoints`, the rule of the points of finite element faces
+as well), from the measures :math:`J_q w_q` and the positions of the points when they are made. In 3D it is
+:math:`J_q w_q`. A plane model with particles is a slice of **unit thickness**: Marmot's plane-strain particles
+integrate their forces and masses per unit thickness, and so do their points, :math:`A_q = J_q w_q`; finite elements
+that meet the particles must then be of plane sections of thickness 1 for the forces to balance. In an **axisymmetric
+model** the particles live in the section r-z, and a face of a particle is an edge of the section that sweeps a ring (a
+conical, cylindrical or plane annular strip) about the axis. A point then stands for the area of its ring,
+:math:`A_q = 2 \\pi r_q\\, J_q w_q`, with the radius :math:`r_q` of the point, so that the contact forces are those of
+the full rings, as the particles' forces and masses are. The ring weight is linear in :math:`r` along an edge, so one
+point at the edge's center already gives the exact area of its ring, :math:`2 \\pi \\bar r L`. The nodal forces of a
+constant pressure on the ring, :math:`\\int 2 \\pi r\\, G(\\boldsymbol{x})\\, ds`, are quadratic along the edge: two
+points per edge integrate them exactly, one point does not.
 """
 
 from collections.abc import Iterable
 
 import numpy as np
-from edelweissfe.constraints.base.contactpoints import ContactPoints
+from edelweissfe.constraints.base.contactpoints import (
+    ContactPoints,
+    areasOfContactPoints,
+)
 from edelweissfe.models.femodel import FEModel
 from edelweissfe.utils.parentfacegeometry import parentFaceShapeFunctions
 from scipy.sparse import csr_matrix
@@ -137,7 +155,10 @@ class ContactPointsOnParticleFaces(ContactPoints):
     locatedOnlyWhenConnected = True
 
     def __init__(
-        self, faces: dict | Iterable, nQuadraturePoints: int = 1, interpolationLinearizedAboutCenter: bool = False
+        self,
+        faces: dict | Iterable,
+        nQuadraturePoints: int = 1,
+        interpolationLinearizedAboutCenter: bool = False,
     ):
         self.interpolationLinearizedAboutCenter = interpolationLinearizedAboutCenter
         pairs = (
@@ -185,7 +206,11 @@ class ContactPointsOnParticleFaces(ContactPoints):
         nFaces = len(self.faceIDs)
         self.nPoints = nFaces * nQuadraturePoints
         self._faceOfPoint = np.repeat(np.arange(nFaces), nQuadraturePoints)
-        self.areas = (self._jacobians(self._coordinatesOfFaceVertices(vertices)) * weights).ravel()
+        faceVertices = self._coordinatesOfFaceVertices(vertices)
+        #: The measure of each point, the length (area in 3D) of its share of its face, and where it is, when the
+        #: points are made: the areas follow from them (:meth:`measureTheAreasAsIn`).
+        self._measures = (self._jacobians(faceVertices) * weights).ravel()
+        self._coordinatesAtTheMeasures = self._coordinatesOfPointsOnFaces(faceVertices)
 
         self.locatePoints(np.zeros(0, dtype=int))
 
@@ -220,11 +245,34 @@ class ContactPointsOnParticleFaces(ContactPoints):
             return np.linalg.norm(tangents[..., 0], axis=-1)
         return np.linalg.norm(np.cross(tangents[..., 0], tangents[..., 1]), axis=-1)
 
+    def _coordinatesOfPointsOnFaces(self, faceVertices: np.ndarray) -> np.ndarray:
+        """Where the points are on faces with the given vertices (nFaces, nFaceVertices, nDim): (nPoints, nDim)."""
+
+        return np.einsum("qa,fad->fqd", self._shapeFunctions, faceVertices).reshape((-1, self.nDim))
+
     def _coordinatesOfAllPoints(self) -> np.ndarray:
         """Where all points are in the current configuration of the particles, (nPoints, nDim)."""
 
-        faceVertices = self._coordinatesOfFaceVertices(self._verticesOfParticles())
-        return np.einsum("qa,fad->fqd", self._shapeFunctions, faceVertices).reshape((-1, self.nDim))
+        return self._coordinatesOfPointsOnFaces(self._coordinatesOfFaceVertices(self._verticesOfParticles()))
+
+    def measureTheAreasAsIn(self, model: FEModel, constraintName: str):
+        """Measure the areas the points stand for as the model integrates (see the module documentation): their
+        measures in 3D and in a plane model, which the particles make a slice of unit thickness, the areas of their
+        rings about the axis in an axisymmetric model, whose particles are axisymmetric
+        (:meth:`~edelweissmeshfree.models.mpmmodel.MPMModel.prepareYourself` checks them).
+
+        Parameters
+        ----------
+        model
+            The model of the constraint that takes the points.
+        constraintName
+            The name of the constraint; unused, the points of particles are measured in every model.
+        """
+
+        self.areas = areasOfContactPoints(
+            self._measures, self._coordinatesAtTheMeasures, np.ones(self.nPoints), model.axisymmetric
+        )
+        self.axisymmetric = model.axisymmetric
 
     def describe(self) -> str:
         """The number of points, particle faces and quadrature points per face, for the journal.

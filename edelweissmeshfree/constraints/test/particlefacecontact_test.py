@@ -408,6 +408,51 @@ def test_face_ids_outside_the_abaqus_numbering_are_refused(faceID):
         ContactPointsOnParticleFaces([(_particle(0.0, 0.0), 1), (_particle(0.0, 0.0, 2), faceID)])
 
 
+@pytest.mark.parametrize("nQuadraturePoints", [1, 2])
+def test_an_axisymmetric_point_stands_for_the_area_of_its_ring(nQuadraturePoints):
+    """Measured in an axisymmetric model, the points of the bottom faces of a row of particles stand for the annulus
+    they sweep, :math:`\\pi (r_o^2 - r_i^2)`, and the points of the outer faces of a column for the cylinder,
+    :math:`2 \\pi r L`, whatever the rule; and every point for the ring of its share of the edge, at its own radius. In a
+    plane model a point stands for its length times the unit thickness of the particles."""
+
+    row = [_particle(0.5 + i * SIZE, 0.0, i + 1) for i in range(4)]
+    column = [_particle(0.5, j * SIZE, j + 1) for j in range(3)]
+    rInner, rOuter = 0.5, 0.5 + 4 * SIZE
+
+    annulus = ContactPointsOnParticleFaces([(p, 1) for p in row], nQuadraturePoints)
+    cylinder = ContactPointsOnParticleFaces([(p, 2) for p in column], nQuadraturePoints)
+    plane = ContactPointsOnParticleFaces([(p, 1) for p in row], nQuadraturePoints)
+    for points in (annulus, cylinder):
+        points.measureTheAreasAsIn(MPMModel(2, axisymmetric=True), "contact")
+    plane.measureTheAreasAsIn(MPMModel(2), "contact")
+
+    assert annulus.axisymmetric and not plane.axisymmetric
+    assert plane.areas.sum() == pytest.approx(4 * SIZE, rel=1e-14)
+    assert annulus.areas.sum() == pytest.approx(np.pi * (rOuter**2 - rInner**2), rel=1e-12)
+    assert cylinder.areas.sum() == pytest.approx(2 * np.pi * (0.5 + SIZE) * 3 * SIZE, rel=1e-12)
+    radii = annulus.currentPointCoordinates(None)[:, 0]
+    np.testing.assert_allclose(annulus.areas, 2 * np.pi * radii * plane.areas, rtol=1e-14)
+
+
+def test_an_axisymmetric_face_pressed_into_the_master_transmits_the_force_of_its_ring():
+    """An overlap d of a face of an axisymmetric particle: the pressure is the penalty times d, as in a plane model, and
+    the force is that pressure on the annulus the face sweeps, equal and opposite on the master."""
+
+    model = MPMModel(2, axisymmetric=True)
+    master = _masterBlock(model, JournalStandIn())
+    particle = _particle(0.3, -0.02)
+    contact = _contact(model, [particle], master, nQuadraturePoints=2)
+
+    assert contact.slave.axisymmetric
+    assert (contact.stateOfPoints == ContactState.IN_CONTACT).all()
+    _residual(contact)
+    ring = np.pi * ((0.3 + SIZE) ** 2 - 0.3**2)
+    np.testing.assert_allclose(contact.getNormalPressures(), PENALTY * 0.02, rtol=1e-12)
+    np.testing.assert_allclose(contact.contactForceOnSlave, [0.0, PENALTY * 0.02 * ring], atol=1e-12)
+    np.testing.assert_allclose(contact.contactForceOnSlave + contact.contactForceOnMaster, 0.0, atol=1e-12)
+    assert contact.penaltyEnergy == pytest.approx(0.5 * PENALTY * ring * 0.02**2)
+
+
 def _tie(model, particles, master, nQuadraturePoints=2, searchDistance=SEARCH):
     """The tie (``type=tied``) of the bottom faces of the particles to the master, connected."""
 
