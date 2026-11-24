@@ -248,6 +248,21 @@ the exact displacement, magnified by the stiff springs -- its resultant over a f
 and the springs' stiffness raises the frequencies of the points they hold, which ``NED``'s critical time step counts
 (its springs along the axes, like the contact's normal spring; :doc:`choosing_a_solver`).
 
+Gradient-enhanced particles tied to gradient-enhanced elements need their **nonlocal field tied** as well, or it ends
+at the tie with no flux, and the damage with it: ``tiedFields="displacement; nonlocal damage"`` holds the field equal
+on both sides by a penalty :math:`\beta l^2/h` per unit area (EdelweissFE's contact theory, *A nonlocal field across
+the tie*; ``nonlocalRadius`` :math:`l`, ``nonlocalPenaltyFactor`` :math:`\beta`). The nodes of the kernel functions
+carry the increment of the field; its value at a point of a particle at the update is the particle's own, from the
+value and the gradient at its center that the particle keeps in its state (``nonlocal damage``, ``nonlocal damage
+gradient``), at the offset of the point from the center
+(:meth:`~edelweissmeshfree.constraints.base.contactpointsonparticlefaces.ContactPointsOnParticleFaces.valuesOfAFieldAtTheOriginsOfLocatedPoints`).
+The tests (``constraints/test/particlefacetiefield_test.py``): a linear field crosses the tie with no force, from the
+increment at the nodes and, once accepted, from the particles' state, which equals what the increment added up to; a
+uniform jump gives equal and opposite fluxes; the tangent; and the critical time step of the field with the tie's rows,
+first and second order, below the exact eigenvalue. The tie of the field acts on the nonlocal field of the particles,
+so under ``carry-critical-time-step-weights`` the particles keep their weights constant on that field, as on the
+displacement.
+
 Contact of particles with a rigid body
 --------------------------------------
 
