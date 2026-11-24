@@ -122,7 +122,7 @@ the estimate (``models/test/criticaltimestepofparticles_test.py``).
 
 The penalty springs of contact and ties add their row sums to the estimate where they act, with the areas of their
 rings, as for the axisymmetric elements. Where a penalty constraint of the discrete system acts on the displacement of
-the particles -- a contact or a tie on their faces, as in example 198 --, the weights of that field stay constant per
+the particles -- a contact or a tie on their faces --, the weights of that field stay constant per
 field, so that the rows of the springs add as they are: the carried weights then tighten the estimate of the other
 fields only, and the time increment is the one without carried weights.
 
@@ -134,7 +134,3 @@ Examples
 - ``examples/197_axisymmetric_fe_rkpm_fe_tie_patch_test``: the axisymmetric twin of the tie patch test: a ring of
   particles tied between rings of ``CX8RUL`` elements transmits axial tension across annuli and a radial expansion
   across cylinders as a ring of finite elements does, on 1, 4 and 16 threads alike.
-- ``examples/198_axisymmetric_punch_on_rkpm_block_explicit_test``: an explicit impact of a ring punch of ``CX8RUL``
-  elements on a free ring of gradient-enhanced particles, with contact: momentum is conserved, energy to within the
-  error of the penalty contact under central differences, which shrinks with the time increment, and the increments
-  stay below the exact critical time step of the particles.
