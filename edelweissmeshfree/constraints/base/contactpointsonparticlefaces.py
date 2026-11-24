@@ -114,8 +114,8 @@ class ContactPointsOnParticleFaces(ContactPoints):
     by several located points, of one particle or of neighbouring ones, is located once
     (:func:`~edelweissmeshfree.constraints.base.pointsofparticles.locateTheNodesOfParticles`). The interpolation
     vectors of the located points form one sparse matrix :math:`C` over these nodes, made once per update of the
-    connectivity: the points move by :math:`C\\, \\Delta\\boldsymbol{U}`, and their forces reach the nodes with
-    :math:`C^T`. The vectors are :math:`G` or :math:`N`, by ``interpolationLinearizedAboutCenter``.
+    connectivity: the points move by :math:`C\\, \\Delta\\boldsymbol{U}` from their origins, where they were at
+    the update, and their forces reach the nodes with :math:`C^T`. The vectors are :math:`G` or :math:`N`, by ``interpolationLinearizedAboutCenter``.
 
     Parameters
     ----------
@@ -283,13 +283,13 @@ class ContactPointsOnParticleFaces(ContactPoints):
             )
         )
 
-        self._coordinatesOfLocated = self._coordinatesOfAllPoints()[points] if len(points) else np.zeros((0, self.nDim))
+        self._originsOfLocated = self._coordinatesOfAllPoints()[points] if len(points) else np.zeros((0, self.nDim))
         columns = [localNodesOfParticle[particle] for particle in particleOfPoint]
         values = [
             interpolationVectorAtPointOfParticle(
                 self._particles[particle], x, self.interpolationLinearizedAboutCenter
             ).ravel()
-            for particle, x in zip(particleOfPoint, self._coordinatesOfLocated)
+            for particle, x in zip(particleOfPoint, self._originsOfLocated)
         ]
         counts = np.array([len(c) for c in columns], dtype=np.intp)
         self._interpolationMatrix = csr_matrix(
@@ -302,9 +302,20 @@ class ContactPointsOnParticleFaces(ContactPoints):
         )
         return list(localIndexOfNode)
 
-    def coordinatesOfLocatedPoints(self, U: np.ndarray, dU: np.ndarray) -> np.ndarray:
-        """:math:`\\boldsymbol{x}_q^n + C\\, \\Delta\\boldsymbol{U}`, from where the points were at the update and the
-        increment since.
+    def originsOfLocatedPoints(self) -> np.ndarray:
+        """:math:`\\boldsymbol{x}_q^n`, where the points were at the update, in the configuration of the particles
+        then.
+
+        Returns
+        -------
+        numpy.ndarray
+            The coordinates, of shape (nLocated, nDim).
+        """
+
+        return self._originsOfLocated
+
+    def displacementsOfLocatedPoints(self, U: np.ndarray, dU: np.ndarray) -> np.ndarray:
+        """:math:`C\\, \\Delta\\boldsymbol{U}`, the increment since the update.
 
         Parameters
         ----------
@@ -316,10 +327,10 @@ class ContactPointsOnParticleFaces(ContactPoints):
         Returns
         -------
         numpy.ndarray
-            The coordinates, of shape (nLocated, nDim).
+            The displacements, of shape (nLocated, nDim).
         """
 
-        return self._coordinatesOfLocated + self._interpolationMatrix @ dU.reshape((-1, self.nDim))
+        return self._interpolationMatrix @ dU.reshape((-1, self.nDim))
 
     def addForceResidual(self, P: np.ndarray, points: np.ndarray, forces: np.ndarray, directions: np.ndarray):
         """Add :math:`C^T (f\\, \\boldsymbol{n})`: the forces of the springs at the given points, distributed over the
