@@ -58,9 +58,18 @@ from edelweissmeshfree.constraints.base.contactpointsonparticlefaces import (
     ContactPointsOnParticleFaces,
 )
 from edelweissmeshfree.models.test._criticaltimestep import serially
-from edelweissmeshfree.models.test._particleplate import RHO, H, particlePlate
+from edelweissmeshfree.models.test._particleplate import (
+    AXISYMMETRIC,
+    RHO,
+    H,
+    particlePlate,
+)
 
-PARTICLE = "GradientEnhancedFiniteStrainSQCNIxNSNI/PlaneStrain/Quad"
+#: The gradient-enhanced particles: plane strain, and axisymmetric (the section r-z of a ring from r = 2 H).
+PARTICLES = [
+    "GradientEnhancedFiniteStrainSQCNIxNSNI/PlaneStrain/Quad",
+    "GradientEnhancedFiniteStrainSQCNIxNSNI/Axisymmetric/Quad",
+]
 #: The penalty of the displacement per unit area, the nonlocal radius of the particles' material, the factor of the
 #: penalty of the field.
 PENALTY, RADIUS, FACTOR = 1e4, 5.0, 10.0
@@ -68,11 +77,12 @@ PENALTY, RADIUS, FACTOR = 1e4, 5.0, 10.0
 A, B = 2e-5, np.array([3e-7, -2e-7])
 
 
-def _tiedPlate(nQuadraturePoints: int = 2):
-    """The plate of 8 x 4 gradient-enhanced particles of the side H, its bottom faces tied to a block of 4 plane strain
-    elements below it, the displacement and the nonlocal field; the model and the tie, paired."""
+def _tiedPlate(particleType: str, nQuadraturePoints: int = 2):
+    """The plate of 8 x 4 gradient-enhanced particles of the side H, its bottom faces tied to a block of 4 elements
+    below it, the displacement and the nonlocal field; the model and the tie, paired."""
 
-    model = particlePlate(PARTICLE, 2.2, 3)
+    model = particlePlate(particleType, 2.2, 3)
+    x0 = 2 * H if particleType in AXISYMMETRIC else 0.0
     journal = Journal()
     with model.topology.changes():
         # past the labels of the nodes of the kernel functions, which their generator takes as they are
@@ -81,7 +91,7 @@ def _tiedPlate(nQuadraturePoints: int = 2):
             "block",
             model,
             journal,
-            configuration=PlaneRectQuadSchema(x0=0.0, y0=-H, length=8 * H, h=H, nX=4, nY=1, elType="CPE4"),
+            configuration=PlaneRectQuadSchema(x0=x0, y0=-H, length=8 * H, h=H, nX=4, nY=1, elType="CPE4"),
         )
         facets = model.elementSets[
             buildContactFacets(model, "block_top", "top", "midside", "facetConsistent", journal)[0]
@@ -137,14 +147,17 @@ def _residualOfTheField(tie, U: np.ndarray, dU: np.ndarray) -> np.ndarray:
     return P[tie._fieldsInTheBlock[1].slave.start :]
 
 
+@pytest.mark.parametrize("particleType", PARTICLES)
 @pytest.mark.parametrize("nQuadraturePoints", [1, 2])
-def test_a_linear_field_crosses_the_tie_from_the_increment_at_the_nodes_and_from_the_state(nQuadraturePoints):
+def test_a_linear_field_crosses_the_tie_from_the_increment_at_the_nodes_and_from_the_state(
+    particleType, nQuadraturePoints
+):
     """The linear field on the elements (their total) and on the particles: first as the increment at the nodes of the
     kernel functions, which the particles' interpolation reproduces at the points; then accepted into the particles'
     state, from which the tie takes the values at the points at the next update. No jump, no force, either way; and
     the values from the state are what the increment added up to."""
 
-    model, tie = _tiedPlate(nQuadraturePoints)
+    model, tie = _tiedPlate(particleType, nQuadraturePoints)
     slave, master = _fieldOfTheTie(tie)
     X = np.array([node.coordinates for node in tie._nodes])
     np.testing.assert_array_equal(tie._valuesAtTheOriginsOfLocated[0], 0.0)
@@ -168,11 +181,12 @@ def test_a_linear_field_crosses_the_tie_from_the_increment_at_the_nodes_and_from
     np.testing.assert_allclose(_residualOfTheField(tie, U, dU), 0.0, atol=roundOff)
 
 
-def test_a_uniform_jump_gives_equal_and_opposite_fluxes():
+@pytest.mark.parametrize("particleType", PARTICLES)
+def test_a_uniform_jump_gives_equal_and_opposite_fluxes(particleType):
     """The master below the particles by a uniform jump j: the particles are pulled down and the master up by the
     flux kappa j over the tied faces, kappa = beta l^2 / h with the size h of the elements' faces."""
 
-    model, tie = _tiedPlate()
+    model, tie = _tiedPlate(particleType)
     slave, master = _fieldOfTheTie(tie)
     jump = 1e-4
     U = np.zeros(tie.nDof)
@@ -181,13 +195,14 @@ def test_a_uniform_jump_gives_equal_and_opposite_fluxes():
     tie.computeKernels(U, np.zeros_like(U), P, None, None)
 
     kappa = FACTOR * RADIUS**2 / (2 * H)
-    flux = kappa * jump * 8 * H
+    flux = kappa * jump * (np.pi * ((10 * H) ** 2 - (2 * H) ** 2) if particleType in AXISYMMETRIC else 8 * H)
     np.testing.assert_allclose(P[slave].sum(), flux, rtol=1e-12)
     np.testing.assert_allclose(P[master].sum(), -flux, rtol=1e-12)
 
 
-def test_the_tangent_is_the_derivative_of_the_residual_contribution():
-    model, tie = _tiedPlate()
+@pytest.mark.parametrize("particleType", PARTICLES)
+def test_the_tangent_is_the_derivative_of_the_residual_contribution(particleType):
+    model, tie = _tiedPlate(particleType)
     rng = np.random.default_rng(4)
     dU = 1e-3 * rng.standard_normal(tie.nDof)
     U = dU + rng.standard_normal(tie.nDof)
@@ -195,8 +210,9 @@ def test_the_tangent_is_the_derivative_of_the_residual_contribution():
     np.testing.assert_allclose(K, finiteDifferenceTangent(tie, U, dU, h=1e-8), atol=1e-6 * np.abs(K).max())
 
 
+@pytest.mark.parametrize("particleType", PARTICLES)
 @pytest.mark.parametrize("order", ["first", "second"])
-def test_the_rows_of_the_tied_field_bound_the_exact_eigenvalue(order):
+def test_the_rows_of_the_tied_field_bound_the_exact_eigenvalue(particleType, order):
     """The nonlocal field of the particles, tied to held elements, of the first order (a damping, no inertia: forward
     Euler, :math:`\\Delta t \\le 2/\\lambda_\\mathrm{max}(\\boldsymbol{C}^{-1}\\boldsymbol{K})`) or of the second (a
     micro-inertia: central differences, :math:`\\Delta t \\le 2/\\sqrt{\\lambda_\\mathrm{max}(\\boldsymbol{M}^{-1}
@@ -208,7 +224,7 @@ def test_the_rows_of_the_tied_field_bound_the_exact_eigenvalue(order):
         STABLE_FRACTION_OF_THE_TANGENT_LIMIT,
     )
 
-    model, tie = _tiedPlate()
+    model, tie = _tiedPlate(particleType)
     system = model.buildDiscreteSystem()
     nDof = system.numbering.nDof
     indexOf = system.numbering.idcsOfFieldVariablesInDofVector
