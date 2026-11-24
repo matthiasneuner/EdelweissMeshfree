@@ -65,6 +65,11 @@ from edelweissmeshfree.models.mpmdiscretesystem import (
     STABLE_FRACTION_OF_THE_TANGENT_LIMIT,
 )
 from edelweissmeshfree.models.mpmmodel import MPMModel
+from edelweissmeshfree.models.test._criticaltimestep import (
+    estimateOfTheSystem,
+    exactCriticalTimeStep,
+    serially,
+)
 from edelweissmeshfree.particlemanagers.kdbinorganizedparticlemanager import (
     KDBinOrganizedParticleManager,
 )
@@ -228,37 +233,30 @@ def test_the_nonlocal_field_is_integrated_by_the_particles_operators_on_their_cr
     assert rate < STABLE_NONLOCAL_RATE
 
 
-def exactStableIncrement(model: MPMModel) -> float:
-    """The critical time step of the explicit scheme for the particles' stiffness, from the eigenvalues of the
-    assembled system: :math:`2/\\omega_\\mathrm{max}` of the central differences on the degrees of freedom with an
-    inertia, whatever their damping, and :math:`2/\\lambda_\\mathrm{max}` of forward Euler on those with a damping
-    alone."""
+@pytest.mark.parametrize("nonlocalField", [WITH_MICRO_INERTIA, VISCOSITY_ONLY], ids=["micro-inertia", "viscosity only"])
+def test_carried_weights_tighten_the_estimate_and_keep_it_below_the_exact_critical_time_step(nonlocalField):
+    """Carried from estimate to estimate on the same state, the weights take one step of the power iteration per
+    estimate: every estimate, the first from the weights constant per field, is at least the one without weights and
+    stays below the exact critical time step of the tangent, scaled by STABLE_FRACTION_OF_THE_TANGENT_LIMIT, and a few
+    estimates tighten it. The weights left are positive on the degrees of freedom of the particles' schemes, at most
+    one, and zero elsewhere."""
 
-    def serially(entities, work):
-        work(entities)
-
-    model.updateConnectivity()
+    model = _bar(Journal(verbose=False), **nonlocalField)
+    exact = exactCriticalTimeStep(model)
     system = model.buildDiscreteSystem()
+    withoutWeights = estimateOfTheSystem(system).value
+    weights = np.zeros(system.numbering.nDof)
+
+    estimates = [estimateOfTheSystem(system, weights).value for _ in range(8)]
+
+    for estimate in estimates:
+        assert withoutWeights <= estimate <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
+    assert estimates[-1] > 1.05 * withoutWeights
     M = np.asarray(system.assembleLumpedMassOfEntitiesWithOwnInertia(serially))
     C = np.asarray(system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially))
-    K = np.zeros((len(M), len(M)))
-    for particle in system.particles:
-        nDof = particle.nDof
-        stiffness = np.zeros(nDof * nDof)
-        particle.assembleStiffness(stiffness)
-        indices = np.asarray(system.locations.ofEntity[particle])
-        K[np.ix_(indices, indices)] += stiffness.reshape(nDof, nDof, order="F")
-
-    stable = np.inf
-    for ofTheScheme, divisor, stableOfTheLargestEigenvalue in (
-        (M > 0.0, M, lambda largest: 2.0 / np.sqrt(largest)),
-        ((M == 0.0) & (C > 0.0), C, lambda largest: 2.0 / largest),
-    ):
-        if ofTheScheme.any():
-            scaling = 1.0 / np.sqrt(divisor[ofTheScheme])
-            S = scaling[:, None] * K[np.ix_(ofTheScheme, ofTheScheme)] * scaling[None, :]
-            stable = min(stable, stableOfTheLargestEigenvalue(np.max(np.abs(np.linalg.eigvals(S)))))
-    return stable
+    ofTheSchemes = (M > 0.0) | (C > 0.0)
+    assert np.all(weights[ofTheSchemes] > 0.0) and np.all(weights[~ofTheSchemes] == 0.0)
+    assert np.max(weights) == 1.0
 
 
 def isStable(model: MPMModel) -> bool:
@@ -282,17 +280,8 @@ def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_
     the damping with the mean of the velocities before and after the update."""
 
     model = _bar(Journal(verbose=False), **nonlocalField)
-    exact = exactStableIncrement(model)
-    system = model.buildDiscreteSystem()
-
-    def serially(entities, work):
-        work(entities)
-
-    bound = system.criticalTimeStepOfEntitiesWithOwnInertia(
-        system.assembleLumpedMassOfEntitiesWithOwnInertia(serially),
-        system.assembleLumpedDampingOfEntitiesWithOwnInertia(serially),
-        serially,
-    ).value
+    exact = exactCriticalTimeStep(model)
+    bound = estimateOfTheSystem(model.buildDiscreteSystem()).value
 
     assert tightness * exact < bound <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
 

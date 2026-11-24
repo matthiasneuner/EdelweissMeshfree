@@ -34,7 +34,12 @@ The solver builds its discrete system on the one path of EdelweissFE's solvers: 
 numbering, particles reaching other kernel functions of the same nodes give new locations on the same numbering, and
 following them through new locations is what building anew gives. The lumped mass is assembled in every increment, not
 only for new locations. A restart checkpoint holds the numbering of the net force and the inverse lumped mass, and a
-resume on another numbering is refused."""
+resume on another numbering is refused.
+
+With ``carry-critical-time-step-weights``, the weights of the estimate of the particles' critical time step are carried
+across new locations -- particles reaching other kernel functions -- and the estimate stays below the exact critical
+time step; they start anew where an estimate with them falls below the one they started from, with a new numbering, and
+after a resume."""
 
 import h5py
 import numpy as np
@@ -69,8 +74,14 @@ from edelweissmeshfree.meshfree.kernelfunctions.marmot.marmotmeshfreekernelfunct
     MarmotMeshfreeKernelFunctionWrapper,
 )
 from edelweissmeshfree.meshfree.particlekerneldomain import ParticleKernelDomain
-from edelweissmeshfree.models.mpmdiscretesystem import MPMDiscreteSystem
+from edelweissmeshfree.models.mpmdiscretesystem import (
+    STABLE_FRACTION_OF_THE_TANGENT_LIMIT,
+    MPMDiscreteSystem,
+)
 from edelweissmeshfree.models.mpmmodel import MPMModel
+from edelweissmeshfree.models.test._criticaltimestep import (
+    exactCriticalTimeStepOfTheSystem,
+)
 from edelweissmeshfree.particlemanagers.kdbinorganizedparticlemanager import (
     KDBinOrganizedParticleManager,
 )
@@ -123,10 +134,10 @@ def _theIncrementsOfTheStepAreTakenAsTheyAre(monkeypatch):
     monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", _estimateOf(np.inf))
 
 
-def _ned(journal: Journal) -> NED:
-    """The explicit dynamic solver with :data:`NED_OPTIONS`."""
+def _ned(journal: Journal, **options) -> NED:
+    """The explicit dynamic solver with :data:`NED_OPTIONS`, and the given options besides."""
 
-    return NED({}, journal, **NED_OPTIONS)
+    return NED({}, journal, **{**NED_OPTIONS, **options})
 
 
 class _SolverRecordingTheBuildPath(NED):
@@ -134,8 +145,8 @@ class _SolverRecordingTheBuildPath(NED):
     calls, the numbering the discrete system has then, and whether the increment and the velocity are wrapped with its
     locations."""
 
-    def __init__(self, journal: Journal):
-        super().__init__({}, journal, **NED_OPTIONS)
+    def __init__(self, journal: Journal, **options):
+        super().__init__({}, journal, **{**NED_OPTIONS, **options})
         self.hooks = []
         self.numberings = []
         self.vectorsAreOnTheLocations = []
@@ -658,9 +669,10 @@ def test_the_time_increment_never_exceeds_the_courant_fraction_of_a_fresh_estima
         assert increment["timeIncrementInUse"] <= courantNumber * increment["fresh"], increment["number"]
 
 
-def _writeCheckpointAndResume(tmp_path, tamper=None):
+def _writeCheckpointAndResume(tmp_path, tamper=None, **options):
     """Run a few increments of the translating body writing a checkpoint, let ``tamper`` change what the checkpoint holds
-    of the solver, and resume from it for the rest of the step."""
+    of the solver, and resume from it for the rest of the step, with the given solver options besides
+    :data:`NED_OPTIONS`."""
 
     journal = Journal()
     model = _translatingBody(journal)
@@ -681,7 +693,7 @@ def _writeCheckpointAndResume(tmp_path, tamper=None):
             model,
             journal,
             fieldOutputController,
-            _ned(journal),
+            _ned(journal, **options),
             N_INCREMENTS,
             [restartOutputManager],
             maxNumInc=N_INCREMENTS // 2,
@@ -700,7 +712,9 @@ def _writeCheckpointAndResume(tmp_path, tamper=None):
     fieldOutputController = MPMFieldOutputController(resumedModel, journal)
     fieldOutputController.initializeJob()
     try:
-        _step(0, resumedModel, journal, fieldOutputController, _ned(journal), N_INCREMENTS).solve(resumeCheckpoint)
+        _step(0, resumedModel, journal, fieldOutputController, _ned(journal, **options), N_INCREMENTS).solve(
+            resumeCheckpoint
+        )
     finally:
         fieldOutputController.finalizeJob()
 
@@ -726,3 +740,124 @@ def test_a_resume_with_another_numbering_than_the_vectors_were_written_for_is_re
 def test_a_checkpoint_without_the_numbering_of_the_vectors_is_refused(tmp_path):
     with pytest.raises(RestartError, match="does not hold the numbering"):
         _writeCheckpointAndResume(tmp_path, lambda solverGroup: solverGroup.__delitem__("_numberingOfNetForce"))
+
+
+#: The options of a solver that carries the weights of the estimate of the particles' critical time step and estimates
+#: them in every increment.
+CARRIED_WEIGHTS = {"carry-critical-time-step-weights": True, "critical-time-step-decrease-per-increment": 1.0}
+
+
+class _SolverRecordingTheCarriedWeights(_SolverRecordingTheBuildPath):
+    """The explicit solver with :data:`CARRIED_WEIGHTS`, recording, in the order they happen, the hooks of the build
+    path and every estimate: the weights it was handed, the critical time step with them, the one of the same system
+    without weights, and the exact critical time step of the system's tangent."""
+
+    def __init__(self, journal: Journal):
+        super().__init__(journal, **CARRIED_WEIGHTS)
+        self.events = []
+
+    def onNewNumbering(self):
+        super().onNewNumbering()
+        self.events.append("numbering")
+
+    def onNewLocations(self):
+        super().onNewLocations()
+        self.events.append("locations")
+
+
+def _stretchingBodyWithinItsCriticalTimeStep(journal: Journal) -> MPMModel:
+    """The stretching body, stretching half as fast again: with its critical time step estimated, the step's increments
+    are lowered to it, and the body still stretches enough for particles to reach other kernel functions."""
+
+    return _translatingBody(journal, stretching=2.25 * VELOCITY / (5 * PARTICLE_SIZE), bondedKernelFunctions=True)
+
+
+def _recordTheEstimates(monkeypatch, solver: _SolverRecordingTheCarriedWeights):
+    """Let every estimate of the particles' critical time step be recorded in the solver's events."""
+
+    def recordingTheEstimate(system, inertia, damping, forEachChunk, weightsOfTheBound=None):
+        handed = np.array(weightsOfTheBound)
+        estimate = ESTIMATE_OF_THE_PARTICLES(system, inertia, damping, forEachChunk, weightsOfTheBound)
+        withoutWeights = ESTIMATE_OF_THE_PARTICLES(system, inertia, damping, forEachChunk).value
+        solver.events.append((handed, estimate.value, withoutWeights, exactCriticalTimeStepOfTheSystem(system)))
+        return estimate
+
+    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", recordingTheEstimate)
+
+
+def _estimates(events: list) -> list:
+    return [event for event in events if isinstance(event, tuple)]
+
+
+def test_carried_weights_survive_particles_reaching_other_kernel_functions_and_bound_the_critical_time_step(
+    monkeypatch,
+):
+    """In the stretching body, particles reach other kernel functions of the same nodes: new locations on the same
+    numbering. The weights are carried across them, indexed by the degrees of freedom of the numbering, i.e. by node
+    and field; every estimate stays below the exact critical time step of the tangent, scaled by
+    STABLE_FRACTION_OF_THE_TANGENT_LIMIT. The estimate the weights start from (weights constant per field) is never below
+    the estimate without weights, and an estimate with carried weights below it starts them anew: the next estimate is
+    handed zero weights."""
+
+    journal = Journal()
+    solver = _SolverRecordingTheCarriedWeights(journal)
+    _recordTheEstimates(monkeypatch, solver)
+
+    _solve(_stretchingBodyWithinItsCriticalTimeStep(journal), journal, [solver], [N_INCREMENTS])
+
+    assert solver.events.count("numbering") == 1
+    afterNewLocations = [
+        later
+        for earlier, later in zip(solver.events, solver.events[1:])
+        if earlier == "locations" and isinstance(later, tuple)
+    ]
+    assert len(afterNewLocations) > 1, "no particle reached other kernel functions"
+    for handed, *_ in afterNewLocations[1:]:
+        assert np.any(handed > 0.0), "the weights were not carried across new locations"
+    estimates = _estimates(solver.events)
+    for (handed, estimate, withoutWeights, exact), following in zip(estimates, estimates[1:] + [None]):
+        assert estimate <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
+        if not np.any(handed > 0.0):
+            assert estimate >= withoutWeights
+            start = estimate
+        elif estimate < start:
+            assert following is not None and np.all(following[0] == 0.0), "the weights were not started anew"
+
+
+def test_carried_weights_start_anew_with_a_new_numbering(monkeypatch):
+    """Building the discrete system anew whenever the connectivity changed gives a new numbering each time: the first
+    estimate on every numbering is handed no weights, the estimates after it the weights the last one left, unless the
+    last one fell below the estimate its weights started from."""
+
+    journal = Journal()
+
+    class _SolverWithANewNumberingForEveryChangeCarryingTheWeights(_SolverRecordingTheCarriedWeights):
+        def updateDiscreteSystem(self, model, change):
+            super().updateDiscreteSystem(model, max(change, Change.NUMBERING) if change > Change.NONE else change)
+
+    solver = _SolverWithANewNumberingForEveryChangeCarryingTheWeights(journal)
+    _recordTheEstimates(monkeypatch, solver)
+
+    _solve(_stretchingBodyWithinItsCriticalTimeStep(journal), journal, [solver], [N_INCREMENTS])
+
+    assert solver.events.count("numbering") > 1
+    lastWasNumbering = lastFellBelowTheStart = False
+    for event in solver.events:
+        if event == "numbering":
+            lastWasNumbering = True
+        elif isinstance(event, tuple):
+            handed, estimate = event[:2]
+            assert np.all(handed == 0.0) if lastWasNumbering or lastFellBelowTheStart else np.any(handed > 0.0)
+            if np.all(handed == 0.0):
+                start = estimate
+            lastWasNumbering, lastFellBelowTheStart = False, estimate < start
+
+
+def test_a_resume_with_carried_weights_goes_on_and_starts_the_weights_anew(tmp_path, monkeypatch):
+    """The carried weights are not part of the checkpoint: a resumed step starts them anew, as every step does."""
+
+    monkeypatch.setattr(MPMDiscreteSystem, "criticalTimeStepOfEntitiesWithOwnInertia", ESTIMATE_OF_THE_PARTICLES)
+    checkpoint = _writeCheckpointAndResume(tmp_path, **CARRIED_WEIGHTS)
+
+    with h5py.File(checkpoint, "r") as f:
+        assert not [name for name in f["solver"] if "weights" in name.lower()]

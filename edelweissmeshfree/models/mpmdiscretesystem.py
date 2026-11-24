@@ -80,6 +80,20 @@ class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
       which needs a symmetric stiffness. That the unsymmetric particles take part in it is an assumption (theory page
       on the critical time step of EdelweissFE, "Why it is safe").
 
+    **With carried weights** (see :meth:`MPMDiscreteSystem.criticalTimeStepOfEntitiesWithOwnInertia`, "Weights carried
+    from estimate to estimate"), :math:`\\boldsymbol{Q}` is the field matrix of the weighted matrix
+    :math:`\\boldsymbol{W}^{-1}|\\boldsymbol{S}|\\boldsymbol{W}`, the row sums are those of its rows, and the
+    critical time step of the blocks of each order is the larger of the one from :math:`\\boldsymbol{Q}` and the one
+    from the rows of the Collatz-Wielandt bound with the weights scaled by the Perron vector of :math:`\\boldsymbol{Q}`,
+    to both of which the rows of the penalty constraints add. A constraint's row :math:`r_i` is the row of
+    :math:`\\boldsymbol{W}^{-1}|\\boldsymbol{S}^\\mathrm{c}|\\boldsymbol{W}` where the weights are constant on its
+    field, and the particles keep them constant in every field a constraint acts on at the estimate. Elsewhere -- a constraint
+    that acts on another field since the estimate, e.g. a contact paired anew -- the row is at most :math:`r_i
+    \\max_{j \\in g} w_j / w_i`, which is added instead: a bound that holds, if loosely; where it lowers the
+    critical time step below the one in use, the particles are estimated anew
+    (:meth:`~edelweissfe.solvers.base.criticaltimestep.CriticalTimeStepOfEntitiesWithOwnInertia.isDue`), now with
+    weights constant on that field.
+
     Parameters
     ----------
     fieldMatrix
@@ -89,18 +103,33 @@ class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
     groupOfDof
         The block of fields of each degree of freedom of the numbering; -1 for one of no block.
     rowSumsInTheOwnBlock
-        The row sum :math:`Z_{i g(i)}` of each degree of freedom within its own block; zero for one of no block.
+        The row sum :math:`Z_{i g(i)} / w_i` of each degree of freedom within its own block; zero for one of no block.
+    factorOfThePenaltyRows
+        The factor :math:`\\max_{j \\in g(i)} w_j / w_i` of the row of a penalty constraint at each degree of freedom:
+        one where the weights are constant on the block, as they are without carried weights.
+    collatzWielandtRows
+        The rows :math:`(|\\boldsymbol{S}|\\boldsymbol{v})_i / v_i` of the Collatz-Wielandt bound with the weights
+        :math:`v_i = c_{g(i)} w_i`, :math:`\\boldsymbol{c}` the Perron vector of the field matrix of the order; None
+        without carried weights.
     """
 
     def __init__(
-        self, fieldMatrix: np.ndarray, orderOfGroup: list[str], groupOfDof: np.ndarray, rowSumsInTheOwnBlock: np.ndarray
+        self,
+        fieldMatrix: np.ndarray,
+        orderOfGroup: list[str],
+        groupOfDof: np.ndarray,
+        rowSumsInTheOwnBlock: np.ndarray,
+        factorOfThePenaltyRows: np.ndarray,
+        collatzWielandtRows: np.ndarray | None = None,
     ):
         self._fieldMatrix = fieldMatrix
         self._orderOfGroup = orderOfGroup
         self._groupOfDof = groupOfDof
         self._rowSumsInTheOwnBlock = rowSumsInTheOwnBlock
+        self._factorOfThePenaltyRows = factorOfThePenaltyRows
+        self._collatzWielandtRows = collatzWielandtRows
         self.dofs = np.flatnonzero(groupOfDof >= 0)
-        self.value = self._criticalTimeStepOfTheFieldMatrix(fieldMatrix)
+        self.value = self._criticalTimeStepOf(fieldMatrix, collatzWielandtRows)
 
     def criticalTimeStep(self, rowSumsOfThePenaltyConstraints: np.ndarray) -> float:
         fieldMatrix = self._fieldMatrix
@@ -108,22 +137,30 @@ class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
         if not coupled.any():
             return self.value
 
+        penaltyRows = rowSumsOfThePenaltyConstraints * self._factorOfThePenaltyRows
         fieldMatrix = fieldMatrix.copy()
-        sums = self._rowSumsInTheOwnBlock[coupled] + rowSumsOfThePenaltyConstraints[coupled]
+        sums = self._rowSumsInTheOwnBlock[coupled] + penaltyRows[coupled]
         groups = self._groupOfDof[coupled]
         for group in np.unique(groups):
             fieldMatrix[group, group] = max(fieldMatrix[group, group], np.max(sums[groups == group]))
-        return self._criticalTimeStepOfTheFieldMatrix(fieldMatrix)
+        collatzWielandtRows = self._collatzWielandtRows
+        if collatzWielandtRows is not None:
+            collatzWielandtRows = collatzWielandtRows + penaltyRows
+        return self._criticalTimeStepOf(fieldMatrix, collatzWielandtRows)
 
-    def _criticalTimeStepOfTheFieldMatrix(self, fieldMatrix: np.ndarray) -> float:
-        """:data:`STABLE_FRACTION_OF_THE_TANGENT_LIMIT` times the smaller of :math:`2/\\sqrt{\\rho(\\boldsymbol{Q})}` of
-        the blocks integrated by central differences and :math:`2/\\rho(\\boldsymbol{Q})` of those integrated by forward
-        Euler.
+    def _criticalTimeStepOf(self, fieldMatrix: np.ndarray, collatzWielandtRows: np.ndarray | None) -> float:
+        """:data:`STABLE_FRACTION_OF_THE_TANGENT_LIMIT` times the smaller of :math:`2/\\sqrt{\\rho}` of the blocks
+        integrated by central differences and :math:`2/\\rho` of those integrated by forward Euler, with :math:`\\rho`
+        the bound of the largest eigenvalue of the blocks of the order: :math:`\\rho(\\boldsymbol{Q})`, or the largest
+        of their Collatz-Wielandt rows if that is smaller.
 
         Parameters
         ----------
         fieldMatrix
             The field matrix.
+        collatzWielandtRows
+            The rows of the Collatz-Wielandt bound with the weights scaled by the Perron vector; None without carried
+            weights.
 
         Returns
         -------
@@ -132,9 +169,15 @@ class CriticalTimeStepBoundOfEachFieldBlock(CriticalTimeStepBound):
         """
 
         def perronRoot(order: str) -> float:
-            """The largest eigenvalue of the nonnegative field matrix of the blocks of the given order."""
+            """The bound of the largest eigenvalue of the blocks of the given order: the largest eigenvalue of their
+            nonnegative field matrix, or the largest of their Collatz-Wielandt rows if that is smaller."""
             groups = [group for group, ofGroup in enumerate(self._orderOfGroup) if ofGroup == order]
-            return float(np.max(np.abs(np.linalg.eigvals(fieldMatrix[np.ix_(groups, groups)])))) if groups else 0.0
+            if not groups:
+                return 0.0
+            rho = float(np.max(np.abs(np.linalg.eigvals(fieldMatrix[np.ix_(groups, groups)]))))
+            if collatzWielandtRows is not None:
+                rho = min(rho, float(np.max(collatzWielandtRows[np.isin(self._groupOfDof, groups)])))
+            return rho
 
         stable = np.inf
         omegaSquared = perronRoot("second")
@@ -527,6 +570,7 @@ class MPMDiscreteSystem(DiscreteSystem):
         lumpedMass: DofVector,
         lumpedDamping: DofVector,
         forEachChunk: Callable[[list, Callable], None],
+        weightsOfTheBound: np.ndarray | None = None,
     ) -> CriticalTimeStepBoundOfEachFieldBlock | None:
         """An estimate of the critical time step of ``NED``'s explicit scheme for the particles, a lower bound of it, from
         their stiffness at the current state and the assembled lumped mass and damping; ``NED`` decides when it is taken
@@ -575,6 +619,52 @@ class MPMDiscreteSystem(DiscreteSystem):
         coupled by the largest eigenvalue of the small field matrix, which takes the geometric mean of the coupling
         blocks. With a single field it is the Gershgorin bound.
 
+        **Weights carried from estimate to estimate** (``weightsOfTheBound``, ``NED``'s
+        ``carry-critical-time-step-weights``). The weights constant per field are the start of the power iteration
+        towards the Perron vector of :math:`|\\boldsymbol{S}|`, where the Collatz-Wielandt bound is exact. Weights
+        :math:`\\boldsymbol{w}` carried from the last estimate take the place of the ones in the same pass: the columns
+        of field :math:`f` are the weights on its degrees of freedom, which gives :math:`\\hat{Z}_{if} \\ge
+        \\sum_{j \\in f} |S_{ij}| w_j`, and :math:`Q_{gf} = \\max_{i \\in g} \\hat{Z}_{if} / w_i` is the field matrix
+        of :math:`\\boldsymbol{W}^{-1}|\\boldsymbol{S}|\\boldsymbol{W}`, which has the eigenvalues of
+        :math:`|\\boldsymbol{S}|`, so again :math:`\\rho(|\\boldsymbol{S}|) \\le \\rho(\\boldsymbol{Q})`. The pass
+        costs as much as without carried weights: the same columns, other values. With :math:`\\boldsymbol{c}` the
+        Perron vector of :math:`\\boldsymbol{Q}`, the weights :math:`v_i = c_g w_i` of the rows of field :math:`g`
+        give :math:`\\hat{\\boldsymbol{a}} = \\sum_f c_f \\hat{\\boldsymbol{Z}}_f \\ge
+        |\\boldsymbol{S}|\\boldsymbol{v}` and the Collatz-Wielandt bound :math:`\\max_i \\hat{a}_i / v_i`, which is
+        never above :math:`\\rho(\\boldsymbol{Q})`, since every row gives :math:`\\hat{a}_i / v_i \\le
+        (\\boldsymbol{Q}\\boldsymbol{c})_g / c_g`; the smaller of the two is taken, against the round-off of the
+        Perron vector. Both hold for every positive :math:`\\boldsymbol{w}`, whatever state it was refined at: the
+        weights carried need not fit the stiffness of now to bound it, only to bound it tightly. At the start, with
+        the weights constant per field, the estimate is never below the one without carried weights. The weights for
+        the next estimate are :math:`\\hat{\\boldsymbol{a}}`, scaled to a largest weight of one per scheme: one step
+        of the power iteration per estimate, which tightens the estimate towards :math:`\\rho(|\\boldsymbol{S}|)`
+        over a few estimates as long as the stiffness changes slowly from estimate to estimate.
+
+        Where the stiffness changes faster than the weights follow, an estimate with carried weights can be below the
+        one with weights constant per field. ``NED`` starts the weights anew (all zero) whenever an estimate with them
+        is below the estimate they started from
+        (:class:`~edelweissfe.solvers.base.criticaltimestep.CriticalTimeStepOfEntitiesWithOwnInertia`), so that an
+        increment that is lowered only never falls below the smallest estimate with weights constant per field of the
+        step (followed, it can fall below the one of the same configuration, down to the one the weights started
+        from). Taking the smaller of the two estimates in every estimate instead would take the columns with weights
+        constant per field as well, which cost about as much again as those of the carried weights. A degree of
+        freedom without a weight -- one that has no inertia or damping at the last estimate -- starts at the largest
+        weight of its block of fields, the weight every degree of freedom of the block has at the start
+        (:meth:`_weightsOfThisEstimate`). So does every degree of freedom of a field a constraint of the discrete system
+        acts on: there the weights stay constant per field, so that the rows of the penalty constraints add as they are
+        (:class:`CriticalTimeStepBoundOfEachFieldBlock`).
+
+        The power iteration shrinks the weights of the degrees of freedom far from the stiffest ones by a factor per
+        estimate, without limit: within a few dozen estimates they fall below what a double resolves next to the
+        largest weight, and a degree of freedom whose stiffness then changes, e.g. as a particle reaches another kernel
+        function, is weighted by round-off, which raises the bound far above the one without weights until the
+        iteration has grown the weight back. So no weight is kept below the machine epsilon of the largest one
+        (:meth:`_weightsForTheNextEstimate`): a weight below it adds nothing to a sum with the largest, so the limit
+        removes only what the arithmetic cannot carry anyway, and every degree of freedom stays weighted, so that a
+        change of its stiffness is followed within one estimate. Any larger limit (a hundredth of the largest weight,
+        say) bounds the particles of a running analysis as tightly, the machine epsilon is the smallest that can be
+        kept.
+
         **The row sums without the stiffness.** A particle's stiffness has as many blocks as the square of its nodes, but
         it sees the nodal increments only through the increment it interpolates at its evaluation point (value,
         gradient and, if stabilized, second gradient): the rows of node :math:`A` are linear in the shape functions of
@@ -599,6 +689,10 @@ class MPMDiscreteSystem(DiscreteSystem):
             Their lumped damping (:meth:`assembleLumpedDampingOfEntitiesWithOwnInertia`), likewise.
         forEachChunk
             The solver's loop over chunks of independent entities.
+        weightsOfTheBound
+            The weights the last estimate left, a vector of the numbering, zero where a degree of freedom has none yet
+            (all zero: the start, with the weights constant per field); replaced in place by the weights for the next
+            estimate. None for the estimate with the weights constant per field alone.
 
         Returns
         -------
@@ -631,8 +725,17 @@ class MPMDiscreteSystem(DiscreteSystem):
                     groupOfDof[inGroup] = len(orderOfGroup)
                     orderOfGroup.append(order)
         nGroups = len(orderOfGroup)
+        orders = [order for order in ("second", "first") if order in orderOfGroup]
+        groupsOfOrder = [[group for group, ofGroup in enumerate(orderOfGroup) if ofGroup == order] for order in orders]
+        inAnOrder = [np.isin(groupOfDof, groups) for groups in groupsOfOrder]
+        weights = self._weightsOfThisEstimate(weightsOfTheBound, groupOfDof, nGroups)
 
-        # Z_if >= sum_{j in f} |S_ij|, assembled column by column
+        # Z_if >= sum_{j in f} |S_ij| w_j, assembled column by column. Row f of the scaled weights of the columns holds
+        # column f on every degree of freedom, so that the columns of a particle are one gather (a new array, whose
+        # transpose is column-major).
+        inAGroup = np.flatnonzero(groupOfDof >= 0)
+        scaledWeightsOfTheColumns = np.zeros((nGroups, nDof))
+        scaledWeightsOfTheColumns[groupOfDof[inAGroup], inAGroup] = (scaling * weights)[inAGroup]
         rowSums = [self.locations.constructDofVector() for _ in range(nGroups)]
         for rowSum in rowSums:
             rowSum[:] = 0.0
@@ -641,11 +744,9 @@ class MPMDiscreteSystem(DiscreteSystem):
         def addAbsoluteStiffnessRowSums(particles):
             for particle in particles:
                 indices = self.locations.ofEntity[particle]
-                inAGroup = groupOfDof[indices] >= 0
-                scaledIndicatorOfGroup = np.zeros((len(indices), nGroups), order="F")
-                scaledIndicatorOfGroup[inAGroup, groupOfDof[indices][inAGroup]] = scaling[indices][inAGroup]
+                scaledWeights = np.take(scaledWeightsOfTheColumns, indices, axis=1).T
                 absoluteStiffnessRowSums = np.zeros((len(indices), nGroups), order="F")
-                particle.addBoundOfAbsoluteStiffnessTimes(scaledIndicatorOfGroup, absoluteStiffnessRowSums)
+                particle.addBoundOfAbsoluteStiffnessTimes(scaledWeights, absoluteStiffnessRowSums)
                 for group, scatterRowSum in enumerate(scatterRowSums):
                     ofTheParticle = scatterRowSum[particle]
                     ofTheParticle += absoluteStiffnessRowSums[:, group]
@@ -656,13 +757,114 @@ class MPMDiscreteSystem(DiscreteSystem):
             scatterRowSum.assembleInto(rowSum)
             Z[:, group] = scaling * np.asarray(rowSum)
 
-        Q = np.array([[np.max(Z[groupOfDof == g, f]) for f in range(nGroups)] for g in range(nGroups)])
+        # the field matrix of the weighted matrix W^-1 |S| W
+        rowSumsPerWeight = Z / weights[:, None]
+        Q = np.array([[np.max(rowSumsPerWeight[groupOfDof == g, f]) for f in range(nGroups)] for g in range(nGroups)])
 
-        inAGroup = groupOfDof >= 0
+        collatzWielandtRows = None
+        if weightsOfTheBound is not None:
+            # the rows of the Collatz-Wielandt bound with the weights c_g w_i, c the Perron vector of the field matrix
+            # of each order, and their image, the weights of the next estimate
+            collatzWielandtRows = np.zeros(nDof)
+            for groups, ofTheOrder in zip(groupsOfOrder, inAnOrder):
+                eigenvalues, eigenvectors = np.linalg.eig(Q[np.ix_(groups, groups)])
+                perronVector = np.abs(np.real(eigenvectors[:, np.argmax(np.abs(eigenvalues))]))
+                scaleOfGroup = np.zeros(nGroups)
+                scaleOfGroup[groups] = np.maximum(perronVector / np.max(perronVector), np.finfo(float).eps)
+                image = Z[np.ix_(ofTheOrder, groups)] @ scaleOfGroup[groups]
+                collatzWielandtRows[ofTheOrder] = image / (scaleOfGroup[groupOfDof[ofTheOrder]] * weights[ofTheOrder])
+                weightsOfTheBound[ofTheOrder] = self._weightsForTheNextEstimate(image)
+            weightsOfTheBound[groupOfDof < 0] = 0.0
+
         rowSumsInTheOwnBlock = np.zeros(nDof)
-        rowSumsInTheOwnBlock[inAGroup] = Z[inAGroup, groupOfDof[inAGroup]]
+        rowSumsInTheOwnBlock[inAGroup] = rowSumsPerWeight[inAGroup, groupOfDof[inAGroup]]
+        factorOfThePenaltyRows = np.ones(nDof)
+        for group in range(nGroups):
+            ofTheGroup = groupOfDof == group
+            factorOfThePenaltyRows[ofTheGroup] = np.max(weights[ofTheGroup]) / weights[ofTheGroup]
 
-        return CriticalTimeStepBoundOfEachFieldBlock(Q, orderOfGroup, groupOfDof, rowSumsInTheOwnBlock)
+        return CriticalTimeStepBoundOfEachFieldBlock(
+            Q, orderOfGroup, groupOfDof, rowSumsInTheOwnBlock, factorOfThePenaltyRows, collatzWielandtRows
+        )
+
+    def _weightsOfThisEstimate(
+        self, weightsOfTheBound: np.ndarray | None, groupOfDof: np.ndarray, nGroups: int
+    ) -> np.ndarray:
+        """The weights an estimate of the critical time step takes, on every degree of freedom: those the last estimate
+        left, where it left one, and the largest weight of its block of fields where it left none (a degree of freedom
+        without inertia or damping at the last estimate) or where a constraint of the discrete system acts on its field
+        (:meth:`_dofsOfTheFieldsOfTheConstraints`). One everywhere -- constant per field -- without carried weights, at
+        their start (all zero), and if a block of fields has none (see
+        :meth:`criticalTimeStepOfEntitiesWithOwnInertia`, "Weights carried from estimate to estimate").
+
+        Parameters
+        ----------
+        weightsOfTheBound
+            The weights the last estimate left, a vector of the numbering; None without carried weights.
+        groupOfDof
+            The block of fields of every degree of freedom, -1 for one in none.
+        nGroups
+            The number of blocks of fields.
+
+        Returns
+        -------
+        numpy.ndarray
+            The weights, positive, a vector of the numbering.
+        """
+
+        weights = np.ones(len(groupOfDof))
+        if weightsOfTheBound is None:
+            return weights
+        constantPerField = self._dofsOfTheFieldsOfTheConstraints()
+        for group in range(nGroups):
+            ofTheGroup = groupOfDof == group
+            carried = weightsOfTheBound[ofTheGroup]
+            if not np.any(carried > 0.0):
+                return np.ones(len(groupOfDof))
+            weights[ofTheGroup] = np.where((carried > 0.0) & ~constantPerField[ofTheGroup], carried, np.max(carried))
+        return weights
+
+    def _dofsOfTheFieldsOfTheConstraints(self) -> np.ndarray:
+        """The degrees of freedom of the fields the constraints of the discrete system act on, whose weights stay
+        constant per field (see :class:`CriticalTimeStepBoundOfEachFieldBlock`).
+
+        Returns
+        -------
+        numpy.ndarray
+            True for every degree of freedom of such a field, a vector of the numbering.
+        """
+
+        fields = {
+            field for constraint in self.constraints for fieldsOfNode in constraint.fields for field in fieldsOfNode
+        }
+        ofTheFields = np.zeros(self.numbering.nDof, dtype=bool)
+        for field in fields & self.numbering.idcsOfFieldsInDofVector.keys():
+            ofTheFields[self.numbering.idcsOfFieldsInDofVector[field]] = True
+        return ofTheFields
+
+    @staticmethod
+    def _weightsForTheNextEstimate(image: np.ndarray) -> np.ndarray:
+        """The weights of a scheme for the next estimate of the critical time step: the image of the weights of this
+        estimate, :math:`\\hat{\\boldsymbol{a}} \\ge |\\boldsymbol{S}|\\boldsymbol{v}`, one step of the power
+        iteration, scaled to a largest weight of one, and no weight below the machine epsilon of the largest (see
+        :meth:`criticalTimeStepOfEntitiesWithOwnInertia`, "Weights carried from estimate to estimate"). An image of
+        zero (no stiffness) leaves the weights constant.
+
+        Parameters
+        ----------
+        image
+            The image of the weights, on the degrees of freedom of the scheme.
+
+        Returns
+        -------
+        numpy.ndarray
+            The weights, in :math:`[\\varepsilon, 1]`.
+        """
+
+        largest = np.max(image)
+        if largest <= 0.0:
+            return np.ones_like(image)
+        return np.maximum(image / largest, np.finfo(float).eps)
 
     def carriersOfTheMotion(self) -> set[str]:
         """Where the model holds the motion of its particles; see
