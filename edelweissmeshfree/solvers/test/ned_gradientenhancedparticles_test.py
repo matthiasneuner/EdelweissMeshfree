@@ -33,7 +33,7 @@ follows the strain.
   viscosity alone, by forward Euler. ``NED`` derives this from the particles' lumped inertia and damping, in a model of
   particles alone.
 * The time increment is the critical time step of the particles, scaled by the courant number. The material
-  parameters make the nonlocal field's limit the smaller one by far, so that this is what is tested: the bound lies
+  parameters make the nonlocal field's limit the smaller one by far, so that this is what is tested: the estimate lies
   below the exact critical time step of the particles' tangent, and the explicit scheme is stable up to that exact
   increment, whatever the damping.
 """
@@ -224,8 +224,8 @@ def test_the_nonlocal_field_is_integrated_by_the_particles_operators_on_their_cr
     assert "displacement" in solver.secondOrderFields
 
     # the time increment is the critical time step of the particles, scaled by the courant number
-    assert solver._criticalTimeStep == 0.5 * solver._criticalTimeStepOfTheEntities.value
-    assert solver.prevTimeStep.timeIncrement == pytest.approx(solver._criticalTimeStep, rel=1e-12)
+    assert solver._largestTimeIncrement == 0.5 * solver._criticalTimeStepOfTheEntities.value
+    assert solver.prevTimeStep.timeIncrement == pytest.approx(solver._largestTimeIncrement, rel=1e-12)
 
     # the nonlocal field follows the strain of the stretching bar
     rate, increment = nonlocalRateAndIncrement(model)
@@ -271,7 +271,7 @@ def isStable(model: MPMModel) -> bool:
     [(WITH_MICRO_INERTIA, 0.5), (VISCOSITY_ONLY, 1.0 / 3.0)],
     ids=["micro-inertia", "viscosity only"],
 )
-def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_up_to_it(nonlocalField, tightness):
+def test_the_estimate_is_below_the_exact_critical_time_step_and_the_scheme_is_stable_up_to_it(nonlocalField, tightness):
     """The critical time step of the particles lies below the exact one of their tangent, scaled by
     STABLE_FRACTION_OF_THE_TANGENT_LIMIT, and within a factor of it: two for the central differences, three for forward
     Euler, whose limit is inverse in the largest eigenvalue, so that the overestimate of a Gershgorin bound enters it
@@ -281,12 +281,12 @@ def test_the_bound_is_below_the_exact_stable_increment_and_the_scheme_is_stable_
 
     model = _bar(Journal(verbose=False), **nonlocalField)
     exact = exactCriticalTimeStep(model)
-    bound = estimateOfTheSystem(model.buildDiscreteSystem()).value
+    estimate = estimateOfTheSystem(model.buildDiscreteSystem()).value
 
-    assert tightness * exact < bound <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
+    assert tightness * exact < estimate <= STABLE_FRACTION_OF_THE_TANGENT_LIMIT * exact
 
-    below, _ = runBar(**nonlocalField, courantNumber=0.95 * exact / bound)
-    above, _ = runBar(**nonlocalField, courantNumber=1.2 * exact / bound)
+    below, _ = runBar(**nonlocalField, courantNumber=0.95 * exact / estimate)
+    above, _ = runBar(**nonlocalField, courantNumber=1.2 * exact / estimate)
     assert isStable(below)
     assert not isStable(above)
 

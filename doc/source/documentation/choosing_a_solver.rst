@@ -302,18 +302,19 @@ bounds the row sums of the absolute value of its own stiffness, node by node, fr
 respect to the increment it interpolates (Marmot), at a cost proportional to its nodes instead of their square. It takes
 the tangent as it is, unsymmetric: the tangent of gradient-enhanced particles couples the stress to the
 nonlocal field far more strongly than the nonlocal field to the strain, and an eigenvalue sees the geometric mean of the
-two couplings, the symmetric part their arithmetic mean. The damping does not lower the bound: ``NED`` takes it with the
-mean of the velocities before and after the update, which leaves the stability limit of the central differences where
-it is without damping. The stiffness is that of a zero increment over a unit time increment: a rate-independent
-material does not depend on the time increment, but for a rate-dependent one, e.g. with a Duvaut-Lions viscosity, it is
-the stiffness relaxed over that time, softer than the response within an explicit increment, and the bound may be too
-large; take a smaller ``courant-number`` there.
+two couplings, the symmetric part their arithmetic mean. The damping does not lower the estimate: ``NED`` takes it
+with the mean of the velocities before and after the update, which leaves the stability limit of the central
+differences where it is without damping. The stiffness is that of a zero increment over a unit time increment: a
+rate-independent material does not depend on the time increment, but for a rate-dependent one, e.g. with a
+Duvaut-Lions viscosity, it is the stiffness relaxed over that time, softer than the response within an explicit
+increment, and the estimate may be too large; take a smaller ``courant-number`` there.
 
 A penalty constraint on the particles -- a support (``ParticlePenaltyWeakDirichlet``), a contact with points on their
-faces, a tie of their faces to finite elements (springs along every axis) -- adds its stiffness to the frequencies of the nodes it couples. The constraints bound the row sums of their own
-stiffness, scaled by the lumped mass, in every increment, and these are added to the particles' row sums inside the
-field matrix (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`): where they
-raise no diagonal entry of it, the particles' estimate stands; a support or a contact far stiffer than the particles
+faces, a tie of their faces to finite elements (springs along every axis) -- adds its stiffness to the frequencies of
+the nodes it couples. The constraints bound the row sums of their own stiffness, scaled by the lumped mass, in every
+increment, and these are added to the particles' row sums inside the field matrix
+(:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepEstimateFromTheFieldMatrix`): where they raise no
+diagonal entry of it, the particles' estimate stands; a support or a contact far stiffer than the particles
 sets the critical time step. The margin policy of the particles watches the estimate with the constraints of the
 current increment as well (theory page on the critical time step of EdelweissFE, "Penalty constraints"). This holds for
 the particles and the constraints together, for the unsymmetric tangent of the particles as well, under two conditions:

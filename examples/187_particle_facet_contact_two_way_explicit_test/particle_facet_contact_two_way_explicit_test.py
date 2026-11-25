@@ -71,6 +71,7 @@ from edelweissfe.outputmanagers.base.outputmanagerbase import OutputManagerBase
 from edelweissfe.sections.plane import PlaneSectionSchema
 from edelweissfe.sections.plane import Section as PlaneSection
 from edelweissfe.solvers.base.criticaltimestep import (
+    CriticalTimeStepEstimate,
     CriticalTimeStepOfThePenaltyConstraints,
 )
 from edelweissfe.solvers.nonlinearexplicitdynamic import NED
@@ -425,13 +426,17 @@ def test_a_stiff_contact_lowers_the_time_increment_and_the_impact_stays_stable(m
 
     stiff = 100 * PENALTY_PER_AREA
 
-    stable = run_sim("particles", "supported block", penaltyPerArea=stiff)
-    assert 0.0 < stable.velocities[-1] < abs(IMPACT_VELOCITY)
+    withTheEstimate = run_sim("particles", "supported block", penaltyPerArea=stiff)
+    assert 0.0 < withTheEstimate.velocities[-1] < abs(IMPACT_VELOCITY)
 
-    monkeypatch.setattr(CriticalTimeStepOfThePenaltyConstraints, "estimate", lambda self, *args: self._take(np.inf))
-    unstable = run_sim("particles", "supported block", penaltyPerArea=stiff)
-    assert len(stable.times) > 5 * len(unstable.times)
-    assert unstable.velocities[-1] > abs(IMPACT_VELOCITY)
+    monkeypatch.setattr(
+        CriticalTimeStepOfThePenaltyConstraints,
+        "estimate",
+        lambda self, *args: self._take(CriticalTimeStepEstimate(np.inf)),
+    )
+    withoutTheEstimate = run_sim("particles", "supported block", penaltyPerArea=stiff)
+    assert len(withTheEstimate.times) > 5 * len(withoutTheEstimate.times)
+    assert withoutTheEstimate.velocities[-1] > abs(IMPACT_VELOCITY)
 
 
 if __name__ == "__main__":
