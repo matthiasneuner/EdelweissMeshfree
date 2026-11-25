@@ -25,9 +25,9 @@
 #  the top level directory of EdelweissMeshfree.
 #  ---------------------------------------------------------------------
 """The estimate of the critical time step of the particles is safe and tight: the explicit particle scheme, integrated
-by hand with the central difference method on fixed kernel functions, is stable at the bound and unstable at twice
+by hand with the central difference method on fixed kernel functions, is stable at the estimate and unstable at twice
 it. The particles bound the row sums of their absolute stiffness by the Cauchy-Schwarz inequality over their nodes,
-which costs a little of the increment (the scheme's limit lies between 1.7 and 1.9 times the bound on these blocks).
+which costs a little of the increment (the scheme's limit lies between 1.7 and 1.9 times the estimate on these blocks).
 Skipped where Marmot is not built."""
 
 import numpy as np
@@ -91,11 +91,11 @@ def _isStable(model, dt: float, nIncrements: int = 400) -> bool:
         ("GradientEnhancedFiniteStrainSQCNIxNSNI/Axisymmetric/Quad", 2.8, 3),
     ],
 )
-def test_the_bound_is_stable_and_within_a_factor_of_the_stable_increment(particleType, supportFactor, kernelOrder):
-    bound = estimateOfTheSystem(particlePlate(particleType, supportFactor, kernelOrder).buildDiscreteSystem()).value
+def test_the_estimate_is_stable_and_within_a_factor_of_the_critical_time_step(particleType, supportFactor, kernelOrder):
+    estimate = estimateOfTheSystem(particlePlate(particleType, supportFactor, kernelOrder).buildDiscreteSystem()).value
 
-    assert _isStable(particlePlate(particleType, supportFactor, kernelOrder), bound)
-    assert not _isStable(particlePlate(particleType, supportFactor, kernelOrder), 2.0 * bound)
+    assert _isStable(particlePlate(particleType, supportFactor, kernelOrder), estimate)
+    assert not _isStable(particlePlate(particleType, supportFactor, kernelOrder), 2.0 * estimate)
 
 
 def _plateWithAPenaltySupport(penalty: float):
@@ -154,7 +154,7 @@ def _plateWithAPenaltySupport(penalty: float):
 @pytest.mark.parametrize("penalty", [1e3, 1e5, 1e7])
 def test_the_rows_of_a_penalty_support_added_to_the_particles_bound_the_exact_eigenvalue(penalty):
     """The row sums of the support's mass-scaled stiffness, added to the particles' rows inside their field matrix
-    (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepBoundOfEachFieldBlock`), bound the largest
+    (:class:`~edelweissmeshfree.models.mpmdiscretesystem.CriticalTimeStepEstimateFromTheFieldMatrix`), bound the largest
     eigenvalue of the particles' tangent with the support's springs, from a support softer than the particles, which
     leaves their estimate as it is, to one far stiffer, which sets it."""
 

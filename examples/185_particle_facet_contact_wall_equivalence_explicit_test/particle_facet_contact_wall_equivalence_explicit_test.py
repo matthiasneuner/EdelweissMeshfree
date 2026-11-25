@@ -108,7 +108,7 @@ VELOCITY = -400e3
 
 def addTheFloor(model: MPMModel, journal: Journal) -> ElementSet:
     """A row of quadratic plane strain elements, ``CPE8UL``, below y = 0, held by its nodes, heavy enough that it does
-    not set the stable time increment; returns the contact facets of its top surface, whose normals point up, out of
+    not set the critical time step; returns the contact facets of its top surface, whose normals point up, out of
     the floor."""
 
     with model.topology.changes():
