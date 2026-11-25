@@ -103,6 +103,8 @@ cdef extern from "Marmot/MarmotParticle.h":
 
         void assignMeshfreeKernelFunctions (const vector[const MarmotMeshfreeKernelFunction*]& meshfreeKernelFunctions) except +
 
+        void updateShapeFunctions() except +
+
         void computePhysicsKernels(   const double* dUc,
                                             double* Pc,
                                             double* Kc,
@@ -234,8 +236,6 @@ cdef class MarmotParticleWrapper:
 
     cdef list[MarmotMeshfreeKernelFunctionWrapper] _assignedKernelFunctions
     cdef list _nodes
-    # the Marmot kernel functions of _assignedKernelFunctions, kept for updateShapeFunctions()
-    cdef vector[const MarmotMeshfreeKernelFunction*] _marmotKernelFunctions
 
     cdef dict _supportedBodyLoads
 
